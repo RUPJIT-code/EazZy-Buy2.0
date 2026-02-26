@@ -426,6 +426,7 @@
       grid-template-columns: repeat(5, 1fr);
       gap: 1rem;
     }
+    #trending .product-grid:empty { display: none; }
 
     .product-card {
       background: var(--surface);
@@ -2374,9 +2375,9 @@
       .hero-inner { padding: 0 1rem; }
       .hero-title { font-size: clamp(2.5rem, 12vw, 5rem); }
       .search-wrap { padding: 0 .5rem; }
-      .search-bar { flex-wrap: wrap; border-radius: 10px; }
+      .search-bar { display: grid; grid-template-columns: auto minmax(0, 1fr); border-radius: 10px; }
       .search-bar input { min-height: 48px; font-size: 16px; }
-      .btn-analyze { min-height: 44px; padding: .85rem 1.2rem; margin: 6px; }
+      .btn-analyze { min-height: 44px; padding: .85rem 1.2rem; margin: 8px 0 10px; grid-column: 1 / -1; justify-self: center; }
       .feature-strip { flex-direction: column; }
       .feature-item { width: 100%; padding: 1rem 1.2rem; border-right: none; border-bottom: 1px solid var(--border); }
       .feature-item:last-child { border-bottom: none; }
@@ -2384,6 +2385,11 @@
       .section { padding: 2.5rem 1rem; }
       .product-card { min-width: 0; }
       .card-deal-btn, .card-compare-btn, .card-analyze-btn { min-height: 44px; }
+      #trending .section-head { align-items: flex-start; flex-wrap: wrap; gap: .6rem 1rem; }
+      #trending .section-title { flex-wrap: wrap; gap: .45rem .65rem; min-width: 0; }
+      #trending .section-title h2 { font-size: 1.9rem; line-height: .95; }
+      #trending .see-all { margin-left: auto; }
+      #trending .product-grid + .product-grid { margin-top: .75rem !important; }
     }
     @media (max-width: 480px) {
       nav { padding: 0 .75rem; }
@@ -3460,11 +3466,23 @@
   });
 
   /*  VIEW MORE DEALS  */
-  const TRENDING_CARDS_PER_ROW = 5;
   const TRENDING_ROWS_PER_CLICK = 2;
-  const TRENDING_BATCH_SIZE = TRENDING_CARDS_PER_ROW * TRENDING_ROWS_PER_CLICK;
   let trendingDealsData = [];
   let trendingRenderedCount = 0;
+  let trendingCardsPerRow = 5;
+  let trendingResizeTimer = null;
+
+  function getTrendingCardsPerRow() {
+    const width = window.innerWidth || document.documentElement.clientWidth || 1200;
+    if (width <= 600) return 2;
+    if (width <= 900) return 3;
+    if (width <= 1200) return 4;
+    return 5;
+  }
+
+  function getTrendingBatchSize() {
+    return trendingCardsPerRow * TRENDING_ROWS_PER_CLICK;
+  }
 
   function ensureTrendingMoreContainer() {
     let container = document.getElementById('deals-more-container');
@@ -3525,6 +3543,47 @@
     `;
   }
 
+  function observeTrendingCards() {
+    if (typeof observer === 'undefined') return;
+    const row1 = document.getElementById('deals-row-1');
+    const row2 = document.getElementById('deals-row-2');
+    if (row1) row1.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+    if (row2) row2.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+    const container = ensureTrendingMoreContainer();
+    if (container) container.querySelectorAll('.fade-in').forEach((el) => observer.observe(el));
+  }
+
+  function appendTrendingRange(start, end) {
+    const row1 = document.getElementById('deals-row-1');
+    const row2 = document.getElementById('deals-row-2');
+    if (!row1 || !row2 || trendingDealsData.length === 0) return;
+
+    for (let i = start; i < end; i++) {
+      const deal = trendingDealsData[i];
+      const card = createTrendingCard(deal, i);
+      if (i < trendingCardsPerRow) {
+        row1.appendChild(card);
+      } else if (i < trendingCardsPerRow * 2) {
+        row2.appendChild(card);
+      } else {
+        const extraIndex = i - (trendingCardsPerRow * 2);
+        const extraRowIndex = Math.floor(extraIndex / trendingCardsPerRow);
+        const extraRow = getOrCreateTrendingExtraRow(extraRowIndex);
+        if (extraRow) extraRow.appendChild(card);
+      }
+    }
+  }
+
+  function rerenderTrendingRows() {
+    if (trendingDealsData.length === 0) return;
+    const keepCount = Math.min(trendingRenderedCount, trendingDealsData.length);
+    resetTrendingRows();
+    appendTrendingRange(0, keepCount);
+    trendingRenderedCount = keepCount;
+    updateTrendingMoreButton();
+    observeTrendingCards();
+  }
+
   function renderTrendingBatch() {
     const row1 = document.getElementById('deals-row-1');
     const row2 = document.getElementById('deals-row-2');
@@ -3534,38 +3593,28 @@
     }
 
     const start = trendingRenderedCount;
-    const end = Math.min(start + TRENDING_BATCH_SIZE, trendingDealsData.length);
-    for (let i = start; i < end; i++) {
-      const deal = trendingDealsData[i];
-      const card = createTrendingCard(deal, i);
-      if (i < TRENDING_CARDS_PER_ROW) {
-        row1.appendChild(card);
-      } else if (i < TRENDING_CARDS_PER_ROW * 2) {
-        row2.appendChild(card);
-      } else {
-        const extraIndex = i - (TRENDING_CARDS_PER_ROW * 2);
-        const extraRowIndex = Math.floor(extraIndex / TRENDING_CARDS_PER_ROW);
-        const extraRow = getOrCreateTrendingExtraRow(extraRowIndex);
-        if (extraRow) extraRow.appendChild(card);
-      }
-    }
-
+    const end = Math.min(start + getTrendingBatchSize(), trendingDealsData.length);
+    appendTrendingRange(start, end);
     trendingRenderedCount = end;
     updateTrendingMoreButton();
-
-    if (typeof observer !== 'undefined') {
-      row1.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-      row2.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-      const container = ensureTrendingMoreContainer();
-      if (container) {
-        container.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
-      }
-    }
+    observeTrendingCards();
   }
 
   function toggleMoreDeals() {
     renderTrendingBatch();
   }
+
+  trendingCardsPerRow = getTrendingCardsPerRow();
+
+  window.addEventListener('resize', () => {
+    if (trendingResizeTimer) clearTimeout(trendingResizeTimer);
+    trendingResizeTimer = setTimeout(() => {
+      const nextCardsPerRow = getTrendingCardsPerRow();
+      if (nextCardsPerRow === trendingCardsPerRow) return;
+      trendingCardsPerRow = nextCardsPerRow;
+      rerenderTrendingRows();
+    }, 150);
+  });
 
   /*  COMPARE SYSTEM  */
   let compareList = []; // array of product data objects (max 4)
@@ -4364,6 +4413,7 @@
 
         trendingDealsData = data.deals;
         trendingRenderedCount = 0;
+        trendingCardsPerRow = getTrendingCardsPerRow();
         resetTrendingRows();
         renderTrendingBatch();
       } catch (error) {
