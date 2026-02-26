@@ -1339,6 +1339,21 @@
       font-size: 1.5rem; letter-spacing: 1px;
       color: var(--accent);
     }
+    .spec-col.recommended {
+      background: linear-gradient(180deg, rgba(201,255,60,.08) 0%, rgba(201,255,60,0) 55%);
+    }
+    .spec-recommended-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .68rem;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      border-radius: 6px;
+      border: 1px solid rgba(201,255,60,.32);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      padding: .28rem .5rem;
+      margin-top: .1rem;
+    }
 
     .spec-vs-divider {
       position: absolute;
@@ -1371,6 +1386,80 @@
       font-family: 'JetBrains Mono', monospace;
       font-size: .82rem; color: var(--text);
       font-weight: 500; line-height: 1.5;
+    }
+    .spec-reco-footer {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--border);
+      background: var(--surface2);
+      padding: 1rem 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .spec-reco-message {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .55rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .78rem;
+      color: var(--text);
+    }
+    .spec-reco-badge {
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      border-radius: 6px;
+      border: 1px solid rgba(201,255,60,.32);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      padding: .25rem .48rem;
+      font-size: .67rem;
+      font-weight: 600;
+    }
+    .spec-reco-reason {
+      color: var(--muted);
+      font-size: .72rem;
+    }
+    .spec-reco-buy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .45rem;
+      border: 1px solid rgba(201,255,60,.35);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      text-decoration: none;
+      border-radius: 8px;
+      padding: .62rem .9rem;
+      min-width: 128px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .74rem;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+      transition: background .2s, border-color .2s;
+    }
+    .spec-reco-buy-btn:hover {
+      background: rgba(201,255,60,.18);
+      border-color: rgba(201,255,60,.5);
+    }
+    .spec-reco-buy-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
+    .spec-reco-buy-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    @media (max-width: 768px) {
+      .spec-reco-footer {
+        grid-column: 1;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .spec-reco-buy-btn {
+        width: 100%;
+      }
     }
 
     /*  BUDGET RESULTS SECTION  */
@@ -2696,10 +2785,10 @@
       <h2>Trending Deals</h2>
       <span class="badge">Hot Right Now</span>
     </div>
-    <a href="#" class="see-all">
+    <!-- <a href="#" class="see-all">
       See all
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-    </a>
+    </a> -->
   </div>
 
   <!-- ROW 1 -->
@@ -3961,7 +4050,7 @@
     btn.disabled = !(product1 && product2);
   }
 
-  function normalizeCompareProduct(raw) {
+  function normalizeCompareProduct(raw, fallbackUrl = '') {
     const specsRaw = (raw.specs && typeof raw.specs === 'object') ? raw.specs : {};
     const specs = {};
     Object.entries(specsRaw).forEach(([k, v]) => {
@@ -3976,9 +4065,85 @@
       priceText: formatComparePrice(raw.price),
       store: String(raw.store || 'UNKNOWN').toUpperCase(),
       img: String(raw.image_url || '').trim(),
-      url: String(raw.url || '').trim(),
+      url: String(fallbackUrl || raw.url || '').trim(),
       specs
     };
+  }
+
+  function normalizeSpecCompareValue(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9.]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function buildCompareRecommendation(prod1, prod2) {
+    const specs1 = (prod1.specs && typeof prod1.specs === 'object') ? prod1.specs : {};
+    const specs2 = (prod2.specs && typeof prod2.specs === 'object') ? prod2.specs : {};
+    const keys1 = Object.keys(specs1);
+    const keys2 = Object.keys(specs2);
+    const commonKeys = keys1.filter((k) => Object.prototype.hasOwnProperty.call(specs2, k));
+
+    let exactMatches = 0;
+    commonKeys.forEach((key) => {
+      const a = normalizeSpecCompareValue(specs1[key]);
+      const b = normalizeSpecCompareValue(specs2[key]);
+      if (a && b && a === b) exactMatches += 1;
+    });
+
+    const similarity = commonKeys.length ? exactMatches / commonKeys.length : 0;
+    const price1 = Number(prod1.price);
+    const price2 = Number(prod2.price);
+    const hasPrice1 = Number.isFinite(price1) && price1 > 0;
+    const hasPrice2 = Number.isFinite(price2) && price2 > 0;
+
+    let score1 = keys1.length * 0.25;
+    let score2 = keys2.length * 0.25;
+    let reason = 'Using available specs and price to pick better value.';
+
+    if (hasPrice1 && hasPrice2) {
+      if (price1 < price2) {
+        const priceLead = Math.min(3, ((price2 - price1) / price2) * 10 + 1);
+        score1 += priceLead;
+        reason = similarity >= 0.4 ? 'Lower price with similar specs.' : 'Better value when price and specs are combined.';
+      } else if (price2 < price1) {
+        const priceLead = Math.min(3, ((price1 - price2) / price1) * 10 + 1);
+        score2 += priceLead;
+        reason = similarity >= 0.4 ? 'Lower price with similar specs.' : 'Better value when price and specs are combined.';
+      } else {
+        score1 += 1;
+        score2 += 1;
+        reason = 'Same price, so specs coverage decides.';
+      }
+    } else if (hasPrice1 && !hasPrice2) {
+      score1 += 1.5;
+      reason = 'Price is clearer for this option, with available specs considered.';
+    } else if (hasPrice2 && !hasPrice1) {
+      score2 += 1.5;
+      reason = 'Price is clearer for this option, with available specs considered.';
+    } else {
+      reason = 'Price not available, so recommendation is based on specs only.';
+    }
+
+    if (similarity >= 0.7) {
+      score1 += 0.5;
+      score2 += 0.5;
+    }
+
+    let index = score1 >= score2 ? 1 : 2;
+    if (Math.abs(score1 - score2) < 0.1) {
+      if (hasPrice1 && hasPrice2 && price1 !== price2) {
+        index = price1 <= price2 ? 1 : 2;
+      } else if (keys1.length !== keys2.length) {
+        index = keys1.length >= keys2.length ? 1 : 2;
+      } else {
+        index = 1;
+      }
+    }
+
+    const product = index === 1 ? prod1 : prod2;
+    return { index, product, reason };
   }
 
   async function fetchCompareProduct(num, url) {
@@ -4020,7 +4185,7 @@
         throw new Error(String(data.error || 'Could not extract product details from URL'));
       }
 
-      const product = normalizeCompareProduct(data.product);
+      const product = normalizeCompareProduct(data.product, url);
       setProductForSlot(num, product);
       showPreview(num, product);
       if (data.warning) {
@@ -4098,14 +4263,19 @@
     const prod2Price = escapeCompareHtml(prod2.priceText || formatComparePrice(prod2.price));
     const prod1Img = escapeCompareHtml(prod1.img || buildComparePlaceholderImage(prod1.name));
     const prod2Img = escapeCompareHtml(prod2.img || buildComparePlaceholderImage(prod2.name));
+    const recommendation = buildCompareRecommendation(prod1, prod2);
+    const recommendedName = escapeCompareHtml(recommendation.product.name || 'Product');
+    const recommendedUrl = escapeCompareHtml(recommendation.product.url || '#');
+    const recommendedReason = escapeCompareHtml(recommendation.reason || '');
 
     body.innerHTML = `
       <div class="spec-vs-divider">VS</div>
-      <div class="spec-col">
+      <div class="spec-col ${recommendation.index === 1 ? 'recommended' : ''}">
         <div class="spec-prod-head">
           <div class="spec-prod-img"><img src="${prod1Img}" alt="${prod1Name}"></div>
           <div class="spec-prod-name">${prod1Name}</div>
           <div class="spec-prod-price">${prod1Price}</div>
+          ${recommendation.index === 1 ? '<div class="spec-recommended-tag">Recommended</div>' : ''}
         </div>
         ${allKeys.map(k => `
           <div class="spec-row">
@@ -4114,11 +4284,12 @@
           </div>
         `).join('')}
       </div>
-      <div class="spec-col">
+      <div class="spec-col ${recommendation.index === 2 ? 'recommended' : ''}">
         <div class="spec-prod-head">
           <div class="spec-prod-img"><img src="${prod2Img}" alt="${prod2Name}"></div>
           <div class="spec-prod-name">${prod2Name}</div>
           <div class="spec-prod-price">${prod2Price}</div>
+          ${recommendation.index === 2 ? '<div class="spec-recommended-tag">Recommended</div>' : ''}
         </div>
         ${allKeys.map(k => `
           <div class="spec-row">
@@ -4126,6 +4297,20 @@
             <div class="spec-val">${escapeCompareHtml(specs2[k] || 'N/A')}</div>
           </div>
         `).join('')}
+      </div>
+      <div class="spec-reco-footer">
+        <div class="spec-reco-message">
+          <span class="spec-reco-badge">Recommended</span>
+          <span>${recommendedName}</span>
+          <span class="spec-reco-reason">${recommendedReason}</span>
+        </div>
+        <a class="spec-reco-buy-btn ${recommendedUrl === '#' ? 'disabled' : ''}" href="${recommendedUrl}" target="_blank" rel="noopener noreferrer">
+          Buy Now
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14"/>
+            <path d="m13 6 6 6-6 6"/>
+          </svg>
+        </a>
       </div>
     `;
 
