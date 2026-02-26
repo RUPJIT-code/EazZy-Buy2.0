@@ -419,6 +419,29 @@
     .see-all:hover { color: var(--accent); }
     .see-all svg { width: 14px; height: 14px; transition: transform .2s; }
     .see-all:hover svg { transform: translateX(3px); }
+    .trending-personalized-hint {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      margin-bottom: 1rem;
+      padding: .35rem .62rem;
+      border-radius: 7px;
+      border: 1px solid rgba(60,255,223,.26);
+      background: rgba(60,255,223,.08);
+      color: var(--accent3);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .68rem;
+      letter-spacing: .55px;
+      text-transform: uppercase;
+    }
+    .trending-personalized-hint::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent3);
+      box-shadow: 0 0 0 3px rgba(60,255,223,.18);
+    }
 
     /*  PRODUCT CARDS  */
     .product-grid {
@@ -1339,6 +1362,21 @@
       font-size: 1.5rem; letter-spacing: 1px;
       color: var(--accent);
     }
+    .spec-col.recommended {
+      background: linear-gradient(180deg, rgba(201,255,60,.08) 0%, rgba(201,255,60,0) 55%);
+    }
+    .spec-recommended-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .68rem;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      border-radius: 6px;
+      border: 1px solid rgba(201,255,60,.32);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      padding: .28rem .5rem;
+      margin-top: .1rem;
+    }
 
     .spec-vs-divider {
       position: absolute;
@@ -1371,6 +1409,80 @@
       font-family: 'JetBrains Mono', monospace;
       font-size: .82rem; color: var(--text);
       font-weight: 500; line-height: 1.5;
+    }
+    .spec-reco-footer {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--border);
+      background: var(--surface2);
+      padding: 1rem 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .spec-reco-message {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .55rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .78rem;
+      color: var(--text);
+    }
+    .spec-reco-badge {
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      border-radius: 6px;
+      border: 1px solid rgba(201,255,60,.32);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      padding: .25rem .48rem;
+      font-size: .67rem;
+      font-weight: 600;
+    }
+    .spec-reco-reason {
+      color: var(--muted);
+      font-size: .72rem;
+    }
+    .spec-reco-buy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .45rem;
+      border: 1px solid rgba(201,255,60,.35);
+      background: rgba(201,255,60,.1);
+      color: var(--accent);
+      text-decoration: none;
+      border-radius: 8px;
+      padding: .62rem .9rem;
+      min-width: 128px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .74rem;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+      transition: background .2s, border-color .2s;
+    }
+    .spec-reco-buy-btn:hover {
+      background: rgba(201,255,60,.18);
+      border-color: rgba(201,255,60,.5);
+    }
+    .spec-reco-buy-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
+    .spec-reco-buy-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    @media (max-width: 768px) {
+      .spec-reco-footer {
+        grid-column: 1;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .spec-reco-buy-btn {
+        width: 100%;
+      }
     }
 
     /*  BUDGET RESULTS SECTION  */
@@ -2696,11 +2808,12 @@
       <h2>Trending Deals</h2>
       <span class="badge">Hot Right Now</span>
     </div>
-    <a href="#" class="see-all">
+    <!-- <a href="#" class="see-all">
       See all
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-    </a>
+    </a> -->
   </div>
+  <div class="trending-personalized-hint" id="trendingPersonalizedHint" style="display:none;"></div>
 
   <!-- ROW 1 -->
   <div class="product-grid" id="deals-row-1">
@@ -3464,6 +3577,21 @@
       if (analyzeBtn) analyzeBtn.click();
     }
   });
+  searchInput.addEventListener('paste', () => {
+    setTimeout(() => {
+      const pastedUrl = String(searchInput.value || '').trim();
+      if (!pastedUrl) return;
+      if (typeof window.resolveTrendingCategory !== 'function') return;
+      const category = window.resolveTrendingCategory(pastedUrl);
+      if (!category) return;
+      if (typeof window.recordTrendingUserBehavior === 'function') {
+        window.recordTrendingUserBehavior(category);
+      }
+      if (typeof window.loadTrendingDeals === 'function') {
+        window.loadTrendingDeals({ category, trigger: 'paste' });
+      }
+    }, 40);
+  });
 
   /*  VIEW MORE DEALS  */
   const TRENDING_ROWS_PER_CLICK = 2;
@@ -3961,7 +4089,7 @@
     btn.disabled = !(product1 && product2);
   }
 
-  function normalizeCompareProduct(raw) {
+  function normalizeCompareProduct(raw, fallbackUrl = '') {
     const specsRaw = (raw.specs && typeof raw.specs === 'object') ? raw.specs : {};
     const specs = {};
     Object.entries(specsRaw).forEach(([k, v]) => {
@@ -3976,9 +4104,85 @@
       priceText: formatComparePrice(raw.price),
       store: String(raw.store || 'UNKNOWN').toUpperCase(),
       img: String(raw.image_url || '').trim(),
-      url: String(raw.url || '').trim(),
+      url: String(fallbackUrl || raw.url || '').trim(),
       specs
     };
+  }
+
+  function normalizeSpecCompareValue(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9.]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function buildCompareRecommendation(prod1, prod2) {
+    const specs1 = (prod1.specs && typeof prod1.specs === 'object') ? prod1.specs : {};
+    const specs2 = (prod2.specs && typeof prod2.specs === 'object') ? prod2.specs : {};
+    const keys1 = Object.keys(specs1);
+    const keys2 = Object.keys(specs2);
+    const commonKeys = keys1.filter((k) => Object.prototype.hasOwnProperty.call(specs2, k));
+
+    let exactMatches = 0;
+    commonKeys.forEach((key) => {
+      const a = normalizeSpecCompareValue(specs1[key]);
+      const b = normalizeSpecCompareValue(specs2[key]);
+      if (a && b && a === b) exactMatches += 1;
+    });
+
+    const similarity = commonKeys.length ? exactMatches / commonKeys.length : 0;
+    const price1 = Number(prod1.price);
+    const price2 = Number(prod2.price);
+    const hasPrice1 = Number.isFinite(price1) && price1 > 0;
+    const hasPrice2 = Number.isFinite(price2) && price2 > 0;
+
+    let score1 = keys1.length * 0.25;
+    let score2 = keys2.length * 0.25;
+    let reason = 'Using available specs and price to pick better value.';
+
+    if (hasPrice1 && hasPrice2) {
+      if (price1 < price2) {
+        const priceLead = Math.min(3, ((price2 - price1) / price2) * 10 + 1);
+        score1 += priceLead;
+        reason = similarity >= 0.4 ? 'Lower price with similar specs.' : 'Better value when price and specs are combined.';
+      } else if (price2 < price1) {
+        const priceLead = Math.min(3, ((price1 - price2) / price1) * 10 + 1);
+        score2 += priceLead;
+        reason = similarity >= 0.4 ? 'Lower price with similar specs.' : 'Better value when price and specs are combined.';
+      } else {
+        score1 += 1;
+        score2 += 1;
+        reason = 'Same price, so specs coverage decides.';
+      }
+    } else if (hasPrice1 && !hasPrice2) {
+      score1 += 1.5;
+      reason = 'Price is clearer for this option, with available specs considered.';
+    } else if (hasPrice2 && !hasPrice1) {
+      score2 += 1.5;
+      reason = 'Price is clearer for this option, with available specs considered.';
+    } else {
+      reason = 'Price not available, so recommendation is based on specs only.';
+    }
+
+    if (similarity >= 0.7) {
+      score1 += 0.5;
+      score2 += 0.5;
+    }
+
+    let index = score1 >= score2 ? 1 : 2;
+    if (Math.abs(score1 - score2) < 0.1) {
+      if (hasPrice1 && hasPrice2 && price1 !== price2) {
+        index = price1 <= price2 ? 1 : 2;
+      } else if (keys1.length !== keys2.length) {
+        index = keys1.length >= keys2.length ? 1 : 2;
+      } else {
+        index = 1;
+      }
+    }
+
+    const product = index === 1 ? prod1 : prod2;
+    return { index, product, reason };
   }
 
   async function fetchCompareProduct(num, url) {
@@ -4020,7 +4224,7 @@
         throw new Error(String(data.error || 'Could not extract product details from URL'));
       }
 
-      const product = normalizeCompareProduct(data.product);
+      const product = normalizeCompareProduct(data.product, url);
       setProductForSlot(num, product);
       showPreview(num, product);
       if (data.warning) {
@@ -4098,14 +4302,19 @@
     const prod2Price = escapeCompareHtml(prod2.priceText || formatComparePrice(prod2.price));
     const prod1Img = escapeCompareHtml(prod1.img || buildComparePlaceholderImage(prod1.name));
     const prod2Img = escapeCompareHtml(prod2.img || buildComparePlaceholderImage(prod2.name));
+    const recommendation = buildCompareRecommendation(prod1, prod2);
+    const recommendedName = escapeCompareHtml(recommendation.product.name || 'Product');
+    const recommendedUrl = escapeCompareHtml(recommendation.product.url || '#');
+    const recommendedReason = escapeCompareHtml(recommendation.reason || '');
 
     body.innerHTML = `
       <div class="spec-vs-divider">VS</div>
-      <div class="spec-col">
+      <div class="spec-col ${recommendation.index === 1 ? 'recommended' : ''}">
         <div class="spec-prod-head">
           <div class="spec-prod-img"><img src="${prod1Img}" alt="${prod1Name}"></div>
           <div class="spec-prod-name">${prod1Name}</div>
           <div class="spec-prod-price">${prod1Price}</div>
+          ${recommendation.index === 1 ? '<div class="spec-recommended-tag">Recommended</div>' : ''}
         </div>
         ${allKeys.map(k => `
           <div class="spec-row">
@@ -4114,11 +4323,12 @@
           </div>
         `).join('')}
       </div>
-      <div class="spec-col">
+      <div class="spec-col ${recommendation.index === 2 ? 'recommended' : ''}">
         <div class="spec-prod-head">
           <div class="spec-prod-img"><img src="${prod2Img}" alt="${prod2Name}"></div>
           <div class="spec-prod-name">${prod2Name}</div>
           <div class="spec-prod-price">${prod2Price}</div>
+          ${recommendation.index === 2 ? '<div class="spec-recommended-tag">Recommended</div>' : ''}
         </div>
         ${allKeys.map(k => `
           <div class="spec-row">
@@ -4126,6 +4336,20 @@
             <div class="spec-val">${escapeCompareHtml(specs2[k] || 'N/A')}</div>
           </div>
         `).join('')}
+      </div>
+      <div class="spec-reco-footer">
+        <div class="spec-reco-message">
+          <span class="spec-reco-badge">Recommended</span>
+          <span>${recommendedName}</span>
+          <span class="spec-reco-reason">${recommendedReason}</span>
+        </div>
+        <a class="spec-reco-buy-btn ${recommendedUrl === '#' ? 'disabled' : ''}" href="${recommendedUrl}" target="_blank" rel="noopener noreferrer">
+          Buy Now
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14"/>
+            <path d="m13 6 6 6-6 6"/>
+          </svg>
+        </a>
       </div>
     `;
 
@@ -4327,6 +4551,141 @@
         .replace(/'/g, '&#39;');
     }
 
+    const TRENDING_BEHAVIOR_KEY = 'eazzyshop_trending_behavior_v1';
+    const TRENDING_CATEGORY_LABELS = {
+      mobiles: 'Mobiles',
+      laptops: 'Laptops',
+      refrigerators: 'Refrigerators',
+      air_conditioners: 'Air Conditioners'
+    };
+    let trendingBehaviorProfile = {};
+    let trendingFocusedCategory = '';
+
+    function normalizeTrendingText(value) {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function resolveTrendingCategory(value) {
+      const text = normalizeTrendingText(value);
+      if (!text) return '';
+
+      if (/(^|\s)(mobile|mobiles|smartphone|smartphones|iphone|android phone|5g phone|cell phone|phone)(\s|$)/.test(text)) {
+        return 'mobiles';
+      }
+      if (/(^|\s)(laptop|laptops|notebook|notebooks|ultrabook|ultrabooks|macbook|chromebook|thinkpad)(\s|$)/.test(text)) {
+        return 'laptops';
+      }
+      if (/(^|\s)(refrigerator|refrigerators|fridge|fridges|freezer|freezers|double door|single door|side by side fridge)(\s|$)/.test(text)) {
+        return 'refrigerators';
+      }
+      if (/(^|\s)(air conditioner|air conditioners|inverter ac|split ac|window ac|ac)(\s|$)/.test(text)) {
+        return 'air_conditioners';
+      }
+      return '';
+    }
+
+    function loadTrendingBehaviorProfile() {
+      try {
+        const raw = localStorage.getItem(TRENDING_BEHAVIOR_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        if (!parsed || typeof parsed !== 'object') return {};
+        const normalized = {};
+        Object.keys(TRENDING_CATEGORY_LABELS).forEach((key) => {
+          const n = Number(parsed[key]);
+          normalized[key] = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+        });
+        return normalized;
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function saveTrendingBehaviorProfile() {
+      try {
+        localStorage.setItem(TRENDING_BEHAVIOR_KEY, JSON.stringify(trendingBehaviorProfile));
+      } catch (error) {
+        // Ignore storage quota / privacy mode errors.
+      }
+    }
+
+    function getTopTrendingBehaviorCategory() {
+      let best = '';
+      let bestScore = 0;
+      Object.entries(TRENDING_CATEGORY_LABELS).forEach(([key]) => {
+        const score = Number(trendingBehaviorProfile[key]) || 0;
+        if (score > bestScore) {
+          best = key;
+          bestScore = score;
+        }
+      });
+      return best;
+    }
+
+    function updateTrendingPersonalizedHint(category, trigger = '') {
+      const hint = document.getElementById('trendingPersonalizedHint');
+      if (!hint) return;
+
+      const key = resolveTrendingCategory(category) || getTopTrendingBehaviorCategory();
+      if (!key || !TRENDING_CATEGORY_LABELS[key]) {
+        hint.style.display = 'none';
+        hint.textContent = '';
+        return;
+      }
+
+      const label = TRENDING_CATEGORY_LABELS[key];
+      const suffix = (trigger === 'analysis' || trigger === 'paste')
+        ? 'from your latest product link'
+        : 'from your browsing behavior';
+      hint.textContent = `Personalized for ${label} ${suffix}`;
+      hint.style.display = 'inline-flex';
+    }
+
+    function recordTrendingUserBehavior(category) {
+      const key = resolveTrendingCategory(category);
+      if (!key) return '';
+      const current = Number(trendingBehaviorProfile[key]) || 0;
+      trendingBehaviorProfile[key] = Math.min(current + 1, 999);
+      saveTrendingBehaviorProfile();
+      return key;
+    }
+
+    function dealCategoryKey(deal) {
+      if (!deal || typeof deal !== 'object') return '';
+      return resolveTrendingCategory([
+        deal.category,
+        deal.sub_category,
+        deal.name
+      ].filter(Boolean).join(' '));
+    }
+
+    function personalizeTrendingDeals(deals, focusCategory = '') {
+      const focus = resolveTrendingCategory(focusCategory);
+      const behaviorCategory = getTopTrendingBehaviorCategory();
+      if (!Array.isArray(deals)) return [];
+
+      return deals
+        .map((deal, index) => {
+          const category = dealCategoryKey(deal);
+          const behaviorWeight = Number(trendingBehaviorProfile[category]) || 0;
+          let score = (deals.length - index) * 0.01;
+          if (focus && category === focus) score += 100;
+          if (behaviorCategory && category === behaviorCategory) score += 25;
+          if (behaviorWeight > 0) score += Math.min(behaviorWeight, 20) * 1.5;
+          score += Math.max(0, Number(deal.discount_pct) || 0) * 0.03;
+          return { deal, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .map((row) => row.deal);
+    }
+
+    trendingBehaviorProfile = loadTrendingBehaviorProfile();
+    window.resolveTrendingCategory = resolveTrendingCategory;
+    window.recordTrendingUserBehavior = recordTrendingUserBehavior;
+
     function createTrendingCard(deal, index) {
       const discount = Math.max(0, Number(deal.discount_pct) || 0);
       const badgeClass = discount >= 15 ? 'hot' : (discount >= 8 ? 'deal' : 'new-arrival');
@@ -4390,11 +4749,15 @@
       return card;
     }
 
-    async function loadTrendingDeals() {
+    async function loadTrendingDeals(options = {}) {
       const row1 = document.getElementById('deals-row-1');
       const row2 = document.getElementById('deals-row-2');
       const row3 = document.getElementById('deals-row-3');
       if (!row1 || !row2 || !row3) return;
+
+      const requestedCategory = resolveTrendingCategory(options.category || '');
+      if (requestedCategory) trendingFocusedCategory = requestedCategory;
+      const activeCategory = requestedCategory || trendingFocusedCategory || getTopTrendingBehaviorCategory();
 
       try {
         const response = await fetch(`${API_URL}/api/deals/trending?limit=30`, {
@@ -4408,18 +4771,21 @@
           trendingRenderedCount = 0;
           resetTrendingRows();
           updateTrendingMoreButton();
+          updateTrendingPersonalizedHint(activeCategory, String(options.trigger || ''));
           return;
         }
 
-        trendingDealsData = data.deals;
+        trendingDealsData = personalizeTrendingDeals(data.deals, activeCategory);
         trendingRenderedCount = 0;
         trendingCardsPerRow = getTrendingCardsPerRow();
         resetTrendingRows();
         renderTrendingBatch();
+        updateTrendingPersonalizedHint(activeCategory, String(options.trigger || ''));
       } catch (error) {
         console.error('Failed to load trending deals:', error);
       }
     }
+    window.loadTrendingDeals = loadTrendingDeals;
     
     // Check authentication on page load
     async function checkAuth() {
@@ -4664,6 +5030,38 @@
         return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
       }
 
+      function inferAnalysisCategory(data, submittedUrl) {
+        const resolver = (typeof window.resolveTrendingCategory === 'function')
+          ? window.resolveTrendingCategory
+          : null;
+        if (!resolver) return '';
+
+        const source = String((data && data.source_platform) || '').toLowerCase().trim();
+        const sourcePayload = (source && data && data[source] && typeof data[source] === 'object')
+          ? data[source]
+          : {};
+        const specs = (sourcePayload.specs && typeof sourcePayload.specs === 'object')
+          ? sourcePayload.specs
+          : {};
+
+        const probes = [
+          data && data.product && data.product.name,
+          data && data.product_name,
+          sourcePayload && sourcePayload.title,
+          data && data.resolved_url,
+          data && data.source_url,
+          submittedUrl,
+          Object.keys(specs).join(' '),
+          Object.values(specs).slice(0, 12).join(' ')
+        ];
+
+        for (let i = 0; i < probes.length; i += 1) {
+          const key = resolver(probes[i] || '');
+          if (key) return key;
+        }
+        return '';
+      }
+
       function renderAnalysis(data, submittedUrl) {
         const section = document.getElementById('analysisResults');
         if (!section) return;
@@ -4814,6 +5212,15 @@
           }
 
           renderAnalysis(data, url);
+          const analyzedCategory = inferAnalysisCategory(data, url);
+          if (analyzedCategory) {
+            if (typeof window.recordTrendingUserBehavior === 'function') {
+              window.recordTrendingUserBehavior(analyzedCategory);
+            }
+            if (typeof window.loadTrendingDeals === 'function') {
+              window.loadTrendingDeals({ category: analyzedCategory, trigger: 'analysis' });
+            }
+          }
           setAnalyzeButtonState(this, 'done');
           setTimeout(() => setAnalyzeButtonState(this, 'idle'), 1400);
         } catch (error) {
