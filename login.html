@@ -453,18 +453,21 @@
       .layout { grid-template-columns:1fr; }
       .brand-panel { display:none; }
       .auth-panel { padding:2rem 1.5rem; }
+      .auth-box { margin: 0 auto; }
     }
     /* Mobile / touch friendly */
     @media (max-width: 600px) {
       .top-nav { padding: 0 1rem; height: 52px; }
       .layout { padding-top: 52px; }
-      .auth-panel { padding: 1.5rem 1rem; }
-      .auth-box { max-width: 100%; }
+      .auth-panel { padding: 1.5rem .9rem; }
+      .auth-box { max-width: 100%; margin: 0 auto; }
       .auth-title { font-size: 2rem; }
       .btn-social, .btn-submit { min-height: 48px; }
       .field-input { padding: .9rem .85rem .9rem 2.55rem; font-size: 16px; min-height: 48px; }
       .name-row { grid-template-columns: 1fr; }
       .social-btns { grid-template-columns: 1fr; }
+      .nav-secure { display: none; }
+      .nav-logo { position: absolute; left: 50%; transform: translateX(-50%); }
     }
     html { -webkit-tap-highlight-color: transparent; }
   </style>
