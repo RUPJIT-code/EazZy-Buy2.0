@@ -16,7 +16,8 @@ import requests
 from bs4 import BeautifulSoup
 
 # ── API Key ───────────────────────────────────────────────────────────────────
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "de53cb944e251074ae54345f7eef6f07")
+# de53cb944e251074ae54345f7eef6f07
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "86ec04ee54df584ba6a0d7a64a634d5b")
 
 try:
     import cloudscraper as _cs_mod

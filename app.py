@@ -1,6 +1,6 @@
 
 """
-NexaBuy Backend Server
+EazZy Shop Backend Server
 ======================
 Authentication + Cross-Platform Price Comparison (Amazon & Flipkart)
 
@@ -561,7 +561,7 @@ def serve_static(path):
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("  NexaBuy Backend  –  Cross-Platform Price Comparison")
+    print("  EazZy-Shop Backend  –  Cross-Platform Price Comparison")
     print("=" * 70)
     init_users_db()
     print(f"  ✅  User database : {USERS_FILE}")
