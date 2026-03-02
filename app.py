@@ -45,6 +45,9 @@ DEALS_DATA_FILE = os.path.join(BASE_DIR, 'data.csv')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
 FRONTEND_HTML_FILES = {'index.html', 'login.html'}
 
+# Load local .env values (OAuth client IDs/secrets, etc.) for local dev runs.
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
 # Google LogIN and Facebook Login setup using OAuth
 
 oauth = OAuth(app)
