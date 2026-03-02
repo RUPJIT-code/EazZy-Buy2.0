@@ -4976,24 +4976,35 @@
         });
       }
 
-      function buildPredictionGraph(currentPrice, futurePrices) {
+      function buildPredictionPoints(currentPrice, futurePrices) {
         const points = [];
-        if (toNumber(currentPrice) !== null) {
-          points.push({ label: 'Now', value: Number(currentPrice) });
+        const now = toNumber(currentPrice);
+        if (now !== null && now > 0) {
+          points.push({ day: 0, shortLabel: 'Now', longLabel: 'Now', value: now });
         }
 
-        const order = [
-          ['7d', '7_days'],
-          ['15d', '15_days'],
-          ['30d', '30_days'],
-          ['60d', '60_days'],
-          ['90d', '90_days']
-        ];
+        Object.entries(futurePrices || {}).forEach(([key, rawValue]) => {
+          const match = String(key).match(/^(\d+)_days$/);
+          const value = toNumber(rawValue);
+          if (!match || value === null || value <= 0) return;
+          const day = Number(match[1]);
+          if (!Number.isFinite(day) || day <= 0) return;
 
-        order.forEach(([label, key]) => {
-          const val = futurePrices && toNumber(futurePrices[key]);
-          if (val !== null && val > 0) points.push({ label, value: val });
+          const shortLabel = day >= 120 ? `${Math.round(day / 30)}m` : `${day}d`;
+          points.push({
+            day,
+            shortLabel,
+            longLabel: `${day} Days`,
+            value
+          });
         });
+
+        points.sort((a, b) => a.day - b.day);
+        return points;
+      }
+
+      function buildPredictionGraph(currentPrice, futurePrices) {
+        const points = buildPredictionPoints(currentPrice, futurePrices);
 
         if (points.length < 2) {
           return '<div style="font-family:JetBrains Mono,monospace;font-size:.75rem;color:var(--muted);padding:.5rem;">Not enough prediction points to draw chart.</div>';
@@ -5015,7 +5026,7 @@
 
         const path = coords.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
         const dots = coords.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="#3cffdf"></circle>`).join('');
-        const labels = coords.map((p) => `<text x="${p.x.toFixed(1)}" y="${(height - 4).toFixed(1)}" fill="#6b6560" font-family="JetBrains Mono" font-size="10" text-anchor="middle">${p.label}</text>`).join('');
+        const labels = coords.map((p) => `<text x="${p.x.toFixed(1)}" y="${(height - 4).toFixed(1)}" fill="#6b6560" font-family="JetBrains Mono" font-size="10" text-anchor="middle">${p.shortLabel}</text>`).join('');
 
         return `
           <svg viewBox="0 0 ${width} ${height}" width="100%" height="170" role="img" aria-label="Price prediction graph">
@@ -5053,14 +5064,8 @@
 
       function renderPredictionList(currentPrice, futurePrices) {
         const list = document.getElementById('analysisPredictionList');
-        const rows = [
-          ['Now', currentPrice],
-          ['7 Days', futurePrices && futurePrices['7_days']],
-          ['15 Days', futurePrices && futurePrices['15_days']],
-          ['30 Days', futurePrices && futurePrices['30_days']],
-          ['60 Days', futurePrices && futurePrices['60_days']],
-          ['90 Days', futurePrices && futurePrices['90_days']]
-        ];
+        const rows = buildPredictionPoints(currentPrice, futurePrices)
+          .map((point) => [point.longLabel, point.value]);
 
         list.innerHTML = rows.map(([k, v]) => `
           <div class="prediction-item">
@@ -5192,6 +5197,12 @@
         const summary = [];
         summary.push(`Platforms found: ${platformCount}`);
         summary.push(`Recommendation: ${reco.text.replace('Recommendation: ', '')}`);
+        if (prediction.model) {
+          const modelName = String(prediction.model).replace(/_/g, ' ');
+          const points = Number(prediction.training_points);
+          const pointsText = Number.isFinite(points) && points > 0 ? ` (${points} points)` : '';
+          summary.push(`Model: ${modelName}${pointsText}`);
+        }
         if (comparison.both_found && toNumber(comparison.price_difference) !== null) {
           summary.push(`Cross-platform difference: ${formatInr(comparison.price_difference)}`);
         }

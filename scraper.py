@@ -8,12 +8,16 @@ Falls back to HTML scraping if structured endpoint fails.
 
 from __future__ import annotations
 import json, os, re, random
+from datetime import datetime
+from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Optional
 from urllib.parse import quote_plus, urljoin, urlparse, unquote, parse_qs
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from sklearn.linear_model import LinearRegression
 
 # ── API Key ───────────────────────────────────────────────────────────────────
 # de53cb944e251074ae54345f7eef6f07
@@ -48,6 +52,239 @@ def _base_headers(referer="https://www.google.com/"):
         "Sec-Fetch-Site": "cross-site",
         "Cache-Control": "no-cache",
         "DNT": "1",
+    }
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEALS_DATA_FILE = os.path.join(BASE_DIR, "data.csv")
+FORECAST_DAYS = (7, 15, 30, 60, 90, 120, 180, 270, 365)
+_PRICE_HISTORY_CACHE = {"mtime": None, "df": None}
+
+_TOKEN_STOPWORDS = {
+    "with", "for", "and", "the", "this", "that", "from", "inch", "star", "edition",
+    "new", "model", "series", "latest", "pro", "plus", "max", "mini", "ultra",
+}
+
+_CATEGORY_HINTS = {
+    "smartphones": ("smartphone", "mobile", "phone", "iphone", "galaxy", "pixel", "oneplus", "xiaomi"),
+    "laptops": ("laptop", "notebook", "macbook", "thinkpad", "vivobook", "ideapad", "xps"),
+    "air conditioners": ("ac", "air conditioner", "split ac", "inverter ac"),
+    "refrigerators": ("fridge", "refrigerator", "door", "freezer"),
+    "washing machines": ("washing machine", "front load", "top load", "washer"),
+    "televisions": ("tv", "television", "oled", "qled", "bravia"),
+    "audio": ("headphone", "earbuds", "speaker", "soundbar", "audio"),
+    "tablets": ("tablet", "ipad", "tab"),
+}
+
+
+def _normalize_text(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _tokenize_text(value: str) -> set:
+    return {
+        tok for tok in _normalize_text(value).split()
+        if len(tok) >= 3 and tok not in _TOKEN_STOPWORDS
+    }
+
+
+def _infer_category_hint(product_name: str) -> str:
+    norm = _normalize_text(product_name)
+    if not norm:
+        return ""
+    for category, keywords in _CATEGORY_HINTS.items():
+        if any(kw in norm for kw in keywords):
+            return category
+    return ""
+
+
+def _load_price_history() -> pd.DataFrame:
+    if not os.path.exists(DEALS_DATA_FILE):
+        return pd.DataFrame()
+
+    mtime = os.path.getmtime(DEALS_DATA_FILE)
+    cached = _PRICE_HISTORY_CACHE.get("df")
+    if cached is not None and _PRICE_HISTORY_CACHE.get("mtime") == mtime:
+        return cached
+
+    usecols = {"InvoiceDate", "UnitPrice", "Description", "Brand", "Category"}
+    try:
+        df = pd.read_csv(DEALS_DATA_FILE, usecols=lambda c: c in usecols, low_memory=False)
+    except Exception:
+        df = pd.DataFrame(columns=list(usecols))
+
+    if df.empty:
+        _PRICE_HISTORY_CACHE["mtime"] = mtime
+        _PRICE_HISTORY_CACHE["df"] = df
+        return df
+
+    df["InvoiceDate"] = pd.to_datetime(df.get("InvoiceDate"), errors="coerce")
+    df["UnitPrice"] = pd.to_numeric(df.get("UnitPrice"), errors="coerce")
+    for col in ("Description", "Brand", "Category"):
+        if col not in df.columns:
+            df[col] = ""
+        df[col] = df[col].fillna("").astype(str)
+
+    df = df.dropna(subset=["InvoiceDate", "UnitPrice"])
+    df = df[df["UnitPrice"] > 0].copy()
+    if df.empty:
+        _PRICE_HISTORY_CACHE["mtime"] = mtime
+        _PRICE_HISTORY_CACHE["df"] = df
+        return df
+
+    df["DescriptionNorm"] = df["Description"].map(_normalize_text)
+    df["CategoryNorm"] = df["Category"].map(_normalize_text)
+    df["DateOnly"] = df["InvoiceDate"].dt.floor("D")
+
+    _PRICE_HISTORY_CACHE["mtime"] = mtime
+    _PRICE_HISTORY_CACHE["df"] = df
+    return df
+
+
+def _weighted_mean_price(group: pd.DataFrame) -> float:
+    w = group["MatchScore"].clip(lower=0.05)
+    return float((group["UnitPrice"] * w).sum() / w.sum())
+
+
+def _predict_with_linear_regression(product_name: str, current_price: Optional[float]) -> dict:
+    default = {
+        "future_prices": {},
+        "recommendation": "PRICE_UNAVAILABLE",
+        "max_savings": None,
+        "best_time_days": None,
+        "confidence": 0.2,
+        "model": "linear_regression",
+        "training_points": 0,
+        "warning": "Not enough historical data to train a linear-regression model.",
+    }
+
+    if not current_price or current_price <= 0:
+        return default
+
+    df = _load_price_history()
+    if df.empty:
+        fallback = dict(default)
+        fallback["warning"] = "History file is unavailable. Returning baseline estimate."
+        fallback["future_prices"] = {f"{d}_days": round(float(current_price), 2) for d in FORECAST_DAYS}
+        fallback["recommendation"] = "BUY_NOW"
+        return fallback
+
+    target_norm = _normalize_text(product_name)
+    target_tokens = _tokenize_text(product_name)
+    token_count = max(1, len(target_tokens))
+
+    scoped = df
+    category_hint = _infer_category_hint(product_name)
+    if category_hint:
+        cat_rows = df[df["CategoryNorm"].str.contains(category_hint, na=False)]
+        if len(cat_rows) >= 60:
+            scoped = cat_rows
+
+    work = scoped.copy()
+    work["TokenOverlap"] = work["DescriptionNorm"].map(
+        lambda txt: len(_tokenize_text(txt) & target_tokens) / token_count
+    )
+    if current_price > 0:
+        work["PriceSimilarity"] = (1 - (work["UnitPrice"] - float(current_price)).abs() / float(current_price)).clip(lower=0.0, upper=1.0)
+    else:
+        work["PriceSimilarity"] = 0.5
+
+    if (work["TokenOverlap"] > 0).any():
+        pool = work[work["TokenOverlap"] > 0].copy()
+    else:
+        pool = work.copy()
+
+    pool["BaseScore"] = 0.7 * pool["TokenOverlap"] + 0.3 * pool["PriceSimilarity"]
+    pool = pool.nlargest(min(800, len(pool)), "BaseScore").copy()
+
+    if target_norm:
+        pool["NameSimilarity"] = pool["DescriptionNorm"].map(lambda txt: SequenceMatcher(None, target_norm, txt).ratio())
+    else:
+        pool["NameSimilarity"] = 0.0
+
+    pool["MatchScore"] = 0.45 * pool["TokenOverlap"] + 0.40 * pool["NameSimilarity"] + 0.15 * pool["PriceSimilarity"]
+    matched = pool[pool["MatchScore"] >= 0.20].copy()
+    if len(matched) < 25:
+        matched = pool.nlargest(min(220, len(pool)), "MatchScore").copy()
+
+    if matched.empty:
+        fallback = dict(default)
+        fallback["warning"] = "Could not find comparable products in history. Returning baseline estimate."
+        fallback["future_prices"] = {f"{d}_days": round(float(current_price), 2) for d in FORECAST_DAYS}
+        fallback["recommendation"] = "BUY_NOW"
+        return fallback
+
+    daily = (
+        matched.groupby("DateOnly", as_index=False)
+        .apply(_weighted_mean_price)
+        .rename(columns={None: "Price"})
+    )
+    if "Price" not in daily.columns:
+        daily.columns = ["DateOnly", "Price"]
+
+    daily["Price"] = pd.to_numeric(daily["Price"], errors="coerce")
+    daily = daily.dropna(subset=["DateOnly", "Price"]).sort_values("DateOnly")
+    if len(daily) < 3:
+        fallback = dict(default)
+        fallback["warning"] = "Very sparse history for this product. Returning baseline estimate."
+        fallback["future_prices"] = {f"{d}_days": round(float(current_price), 2) for d in FORECAST_DAYS}
+        fallback["recommendation"] = "BUY_NOW"
+        fallback["training_points"] = int(len(daily))
+        return fallback
+
+    start_date = pd.Timestamp(daily["DateOnly"].min())
+    X = (daily["DateOnly"] - start_date).dt.days.astype(float).to_numpy().reshape(-1, 1)
+    y = daily["Price"].astype(float).to_numpy()
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    base_date = max(pd.Timestamp(datetime.utcnow().date()), pd.Timestamp(daily["DateOnly"].max()))
+    base_x = float((base_date - start_date).days)
+    base_prediction = float(model.predict([[base_x]])[0])
+    calibration_offset = float(current_price) - base_prediction
+
+    future_prices = {}
+    for day in FORECAST_DAYS:
+        pred = float(model.predict([[base_x + float(day)]])[0]) + calibration_offset
+        floor_price = max(1.0, float(current_price) * 0.35)
+        cap_price = max(floor_price + 1.0, float(current_price) * 1.80)
+        pred = min(max(pred, floor_price), cap_price)
+        future_prices[f"{day}_days"] = round(pred, 2)
+
+    best_day = min(future_prices, key=future_prices.get)
+    best_day_num = int(best_day.split("_", 1)[0]) if best_day else None
+    min_future_price = min(future_prices.values()) if future_prices else float(current_price)
+    max_savings = round(float(current_price) - min_future_price, 2)
+    recommendation = "WAIT" if max_savings > (float(current_price) * 0.03) else "BUY_NOW"
+
+    try:
+        r2_score = float(model.score(X, y))
+    except Exception:
+        r2_score = 0.0
+    r2_score = max(0.0, min(1.0, r2_score))
+    sample_factor = min(1.0, len(daily) / 90.0)
+    match_factor = float(matched["MatchScore"].mean()) if len(matched) else 0.0
+    confidence = 0.25 + (0.45 * r2_score) + (0.20 * sample_factor) + (0.10 * match_factor)
+    confidence = max(0.2, min(0.95, confidence))
+
+    warning = ""
+    if len(daily) < 20:
+        warning = (
+            f"Model trained on limited data ({len(daily)} day-points). "
+            "Forecast may be less stable."
+        )
+
+    return {
+        "future_prices": future_prices,
+        "recommendation": recommendation,
+        "max_savings": max_savings,
+        "best_time_days": best_day_num if recommendation == "WAIT" else None,
+        "confidence": round(confidence, 4),
+        "model": "linear_regression",
+        "training_points": int(len(daily)),
+        "warning": warning,
     }
 
 
@@ -1015,19 +1252,8 @@ def analyze_url(raw_url: str) -> dict:
     src_data = results.get(source) or (next(iter(results.values())) if results else None)
     current_price = src_data.get("price") if src_data else None
 
-    future_prices: dict = {}
-    recommendation = "PRICE_UNAVAILABLE"
-    max_savings = None
-    if current_price:
-        future_prices = {
-            "7_days":  round(current_price * 0.98, 2),
-            "15_days": round(current_price * 0.95, 2),
-            "30_days": round(current_price * 0.92, 2),
-            "60_days": round(current_price * 0.90, 2),
-            "90_days": round(current_price * 0.88, 2),
-        }
-        max_savings = round(current_price - min(future_prices.values()), 2)
-        recommendation = "WAIT" if (max_savings / current_price) > 0.05 else "BUY_NOW"
+    prediction = _predict_with_linear_regression(product_name or "", current_price)
+    warning = str(prediction.get("warning") or "").strip()
 
     print(f"[ANALYZE] Done. platforms={list(results.keys())} price={current_price}")
 
@@ -1046,12 +1272,15 @@ def analyze_url(raw_url: str) -> dict:
             "image_url": src_data.get("image_url") if src_data else None,
         },
         "prediction": {
-            "future_prices": future_prices,
-            "recommendation": recommendation,
-            "max_savings": max_savings,
-            "best_time_days": 90 if recommendation == "WAIT" else None,
-            "confidence": 0.85 if len(results) == 2 else 0.60,
+            "future_prices": prediction.get("future_prices", {}),
+            "recommendation": prediction.get("recommendation", "PRICE_UNAVAILABLE"),
+            "max_savings": prediction.get("max_savings"),
+            "best_time_days": prediction.get("best_time_days"),
+            "confidence": prediction.get("confidence", 0.2),
+            "model": prediction.get("model", "linear_regression"),
+            "training_points": prediction.get("training_points", 0),
         },
+        "warning": warning,
         "amazon":   results.get("amazon",   {"found": False, "message": "Not found on Amazon"}),
         "flipkart": results.get("flipkart", {"found": False, "message": "Not found on Flipkart"}),
         "comparison": {
