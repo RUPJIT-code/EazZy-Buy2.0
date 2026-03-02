@@ -24,8 +24,10 @@ from functools import wraps
 
 import numpy as np
 import pandas as pd
-from flask import Flask, abort, jsonify, request, send_from_directory, session
+from flask import Flask, abort, jsonify, request, send_from_directory, session, redirect, url_for
 from flask_cors import CORS
+from authlib.integrations.flask_client import OAuth
+from dotenv import load_dotenv
 
 # ── local scraper module ──────────────────────────────────────────────────────
 from scraper import analyze_url
@@ -43,6 +45,33 @@ DEALS_DATA_FILE = os.path.join(BASE_DIR, 'data.csv')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
 FRONTEND_HTML_FILES = {'index.html', 'login.html'}
 
+# Google LogIN and Facebook Login setup using OAuth
+
+oauth = OAuth(app)
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+FACEBOOK_CLIENT_ID = os.environ.get("FACEBOOK_CLIENT_ID", "")
+FACEBOOK_CLIENT_SECRET = os.environ.get("FACEBOOK_CLIENT_SECRET", "")
+
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+
+if FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET:
+    oauth.register(
+        name="facebook",
+        client_id=FACEBOOK_CLIENT_ID,
+        client_secret=FACEBOOK_CLIENT_SECRET,
+        access_token_url="https://graph.facebook.com/v19.0/oauth/access_token",
+        authorize_url="https://www.facebook.com/v19.0/dialog/oauth",
+        api_base_url="https://graph.facebook.com/v19.0/",
+        client_kwargs={"scope": "email public_profile"},
+    )
 # ── caches ────────────────────────────────────────────────────────────────────
 _TRENDING_CACHE: dict = {'mtime': None, 'deals': [], 'generated_at': None}
 _BUDGET_CACHE: dict   = {'mtime': None, 'products': None, 'generated_at': None}
@@ -132,7 +161,17 @@ def init_users_db():
             'email', 'password_hash', 'first_name', 'last_name',
             'created_at', 'last_login',
         ]).to_csv(USERS_FILE, index=False)
-
+        
+        
+    # Backward-compatible migration for existing CSVs.
+    df = pd.read_csv(USERS_FILE, dtype=str, keep_default_na=False)
+    changed = False
+    for col in ('provider', 'google_sub', 'facebook_id'):
+        if col not in df.columns:
+            df[col] = ''
+            changed = True
+    if changed:
+        df.to_csv(USERS_FILE, index=False)
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -154,6 +193,44 @@ def save_user(email, password, first_name, last_name):
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     df.to_csv(USERS_FILE, index=False)
     return True, "User created"
+
+def save_or_update_social_user(email, first_name, last_name, provider, provider_id):
+    df = pd.read_csv(USERS_FILE, dtype=str, keep_default_na=False)
+    for col in ('provider', 'google_sub', 'facebook_id'):
+        if col not in df.columns:
+            df[col] = ''
+
+    df['email'] = df['email'].str.strip().str.lower()
+    now = datetime.now().isoformat()
+
+    if email in df['email'].values:
+        idx = df.index[df['email'] == email][0]
+        if not str(df.at[idx, 'first_name']).strip():
+            df.at[idx, 'first_name'] = first_name
+        if not str(df.at[idx, 'last_name']).strip():
+            df.at[idx, 'last_name'] = last_name
+        df.at[idx, 'provider'] = provider
+        if provider == 'google':
+            df.at[idx, 'google_sub'] = provider_id
+        elif provider == 'facebook':
+            df.at[idx, 'facebook_id'] = provider_id
+        df.at[idx, 'last_login'] = now
+    else:
+        row = {
+            'email': email,
+            'password_hash': '',
+            'first_name': first_name,
+            'last_name': last_name,
+            'created_at': now,
+            'last_login': now,
+            'provider': provider,
+            'google_sub': provider_id if provider == 'google' else '',
+            'facebook_id': provider_id if provider == 'facebook' else '',
+        }
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+
+    df.to_csv(USERS_FILE, index=False)
+
 
 
 def verify_user(email, password):
@@ -187,6 +264,120 @@ def login_required(f):
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth endpoints
 # ─────────────────────────────────────────────────────────────────────────────
+
+# new addition for google and facebook login 
+@app.route('/api/auth/google/start', methods=['GET'])
+def google_start():
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        return jsonify({'success': False, 'error': 'Google OAuth is not configured on server'}), 500
+    session['oauth_next'] = '/index.html'
+    nonce = secrets.token_urlsafe(24)
+    session['google_nonce'] = nonce
+    return oauth.google.authorize_redirect(
+        url_for('google_callback', _external=True),
+        prompt='select_account',
+        nonce=nonce,
+    )
+
+
+@app.route('/api/auth/google/callback', methods=['GET'])
+def google_callback():
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        return redirect('/login.html?error=google_not_configured')
+    if request.args.get('error'):
+        code = str(request.args.get('error', 'google_auth_failed')).strip().lower()
+        print(f"[google_callback] provider error: {request.args}")
+        if code == 'access_denied':
+            return redirect('/login.html?error=google_access_denied')
+        return redirect('/login.html?error=google_auth_failed')
+    try:
+        token = oauth.google.authorize_access_token()
+        user_info = {}
+        nonce = session.pop('google_nonce', None)
+
+        # Primary: OpenID Connect ID token
+        try:
+            parsed = oauth.google.parse_id_token(token, nonce=nonce)
+            if isinstance(parsed, dict):
+                user_info.update(parsed)
+        except Exception:
+            print(f"[google_callback] parse_id_token failed: {traceback.format_exc()}")
+
+        # Fallback: Google userinfo endpoint
+        if not user_info.get('email'):
+            try:
+                profile = oauth.google.get('https://openidconnect.googleapis.com/v1/userinfo').json()
+                if isinstance(profile, dict):
+                    user_info.update(profile)
+            except Exception:
+                print(f"[google_callback] userinfo fetch failed: {traceback.format_exc()}")
+
+        if not user_info:
+            return redirect('/login.html?error=google_auth_failed')
+
+        email = str(user_info.get('email', '')).strip().lower()
+        if not email:
+            return redirect('/login.html?error=google_email_required')
+
+        first_name = str(user_info.get('given_name', '')).strip() or 'Google'
+        last_name = str(user_info.get('family_name', '')).strip() or 'User'
+        google_sub = str(user_info.get('sub', '')).strip()
+        save_or_update_social_user(email, first_name, last_name, 'google', google_sub)
+
+        session.permanent = True
+        session['user_email'] = email
+        session['user_name'] = f"{first_name} {last_name}".strip()
+        return redirect(session.pop('oauth_next', '/index.html'))
+    except Exception:
+        print(f"[google_callback] Unhandled error: {traceback.format_exc()}")
+        return redirect('/login.html?error=google_auth_failed')
+
+
+@app.route('/api/auth/facebook/start', methods=['GET'])
+def facebook_start():
+    if not (FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET):
+        return jsonify({'success': False, 'error': 'Facebook OAuth is not configured on server'}), 500
+    session['oauth_next'] = '/index.html'
+    return oauth.facebook.authorize_redirect(
+        url_for('facebook_callback', _external=True),
+    )
+
+
+@app.route('/api/auth/facebook/callback', methods=['GET'])
+def facebook_callback():
+    if not (FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET):
+        return redirect('/login.html?error=facebook_not_configured')
+    try:
+        oauth.facebook.authorize_access_token()
+        profile = oauth.facebook.get('me?fields=id,email,first_name,last_name,name').json()
+        if not isinstance(profile, dict):
+            return redirect('/login.html?error=facebook_auth_failed')
+
+        email = str(profile.get('email', '')).strip().lower()
+        if not email:
+            return redirect('/login.html?error=facebook_email_required')
+
+        first_name = str(profile.get('first_name', '')).strip()
+        last_name = str(profile.get('last_name', '')).strip()
+        if not first_name and not last_name:
+            display_name = str(profile.get('name', '')).strip()
+            parts = display_name.split(' ', 1)
+            first_name = parts[0] if parts and parts[0] else 'Facebook'
+            last_name = parts[1] if len(parts) > 1 else 'User'
+        else:
+            first_name = first_name or 'Facebook'
+            last_name = last_name or 'User'
+
+        facebook_id = str(profile.get('id', '')).strip()
+        save_or_update_social_user(email, first_name, last_name, 'facebook', facebook_id)
+
+        session.permanent = True
+        session['user_email'] = email
+        session['user_name'] = f"{first_name} {last_name}".strip()
+        return redirect(session.pop('oauth_next', '/index.html'))
+    except Exception:
+        print(f"[facebook_callback] Unhandled error: {traceback.format_exc()}")
+        return redirect('/login.html?error=facebook_auth_failed')
 
 @app.route('/api/auth/signup', methods=['POST'])
 def signup():
