@@ -1,19 +1,3 @@
-
-"""
-EazZy Shop Backend Server
-======================
-Authentication + Cross-Platform Price Comparison (Amazon & Flipkart)
-
-Run:
-    pip install -r requirements.txt
-    python app.py
-
-Optional – get a free ScraperAPI key at https://www.scraperapi.com/
-and set it to improve scraping success rate:
-    export SCRAPER_API_KEY=your_key_here
-    python app.py
-"""
-
 import os
 import json
 import hashlib
@@ -29,17 +13,17 @@ from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 
-# ── local scraper module ──────────────────────────────────────────────────────
+# ── local scraper module
 from scraper import analyze_url
 
 app = Flask(__name__, static_folder='static')
 app.secret_key = secrets.token_hex(32)
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
-CORS(app, supports_credentials=True)
+app.config['SESSION_COOKIE_HTTPONLY'] = True #  JS cannot access cookies
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' #  Prevents CSRF attacks
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7) #  Session expires after 7 days
+CORS(app, supports_credentials=True) #  Allows frontend (different port/domain)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
 USERS_FILE = os.path.join(BASE_DIR, 'users.csv')
 DEALS_DATA_FILE = os.path.join(BASE_DIR, 'data.csv')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
@@ -75,7 +59,8 @@ if FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET:
         api_base_url="https://graph.facebook.com/v19.0/",
         client_kwargs={"scope": "email public_profile"},
     )
-# ── caches ────────────────────────────────────────────────────────────────────
+# ── Caches
+# Avoids re-reading large CSV every request.
 _TRENDING_CACHE: dict = {'mtime': None, 'deals': [], 'generated_at': None}
 _BUDGET_CACHE: dict   = {'mtime': None, 'products': None, 'generated_at': None}
 
@@ -97,7 +82,7 @@ BUDGET_CATEGORY_LABELS = {
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _safe_number(value, default=0.0):
+def _safe_number(value, default=0.0): # Converts input safely to float
     try:
         n = float(value)
         return default if (np.isnan(n) or np.isinf(n)) else n
@@ -105,14 +90,14 @@ def _safe_number(value, default=0.0):
         return default
 
 
-def _store_from_product_id(product_id):
+def _store_from_product_id(product_id): # Assigns product to AMAZON or FLIPKART (Deterministic hashing)
     try:
         return 'AMAZON' if int(float(str(product_id))) % 2 == 0 else 'FLIPKART'
     except Exception:
         return 'AMAZON' if abs(hash(str(product_id))) % 2 == 0 else 'FLIPKART'
 
 
-def _build_marketplace_url(product_name, store):
+def _build_marketplace_url(product_name, store): # Used for “Buy” button
     from urllib.parse import quote_plus
     q = quote_plus(str(product_name)[:80])
     return (
@@ -122,7 +107,7 @@ def _build_marketplace_url(product_name, store):
     )
 
 
-def _parse_specs(raw_specs, fallback=None):
+def _parse_specs(raw_specs, fallback=None): # Makes product specs consistent.
     specs = {}
     parsed = {}
 
@@ -158,7 +143,7 @@ def _parse_specs(raw_specs, fallback=None):
 # User database (CSV-based)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def init_users_db():
+def init_users_db(): # Creates users.csv if missing
     if not os.path.exists(USERS_FILE):
         pd.DataFrame(columns=[
             'email', 'password_hash', 'first_name', 'last_name',
@@ -176,11 +161,11 @@ def init_users_db():
     if changed:
         df.to_csv(USERS_FILE, index=False)
 
-def hash_password(password):
+def hash_password(password): # Converts password → secure hash
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def save_user(email, password, first_name, last_name):
+def save_user(email, password, first_name, last_name): # Reads CSV - Checks duplicate email - Adds new row - Saves back to CSV
     df = pd.read_csv(USERS_FILE, dtype=str, keep_default_na=False)
     df['email'] = df['email'].str.strip().str.lower()
     if email in df['email'].values:
@@ -236,7 +221,7 @@ def save_or_update_social_user(email, first_name, last_name, provider, provider_
 
 
 
-def verify_user(email, password):
+def verify_user(email, password): # Validates login - Compares hashed password
     try:
         df = pd.read_csv(USERS_FILE, dtype=str, keep_default_na=False)
         df['email'] = df['email'].str.strip().str.lower()
@@ -254,7 +239,7 @@ def verify_user(email, password):
         return False, None
 
 
-def login_required(f):
+def login_required(f): # Returns 401 if not logged in
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_email' not in session:
@@ -382,6 +367,7 @@ def facebook_callback():
         print(f"[facebook_callback] Unhandled error: {traceback.format_exc()}")
         return redirect('/login.html?error=facebook_auth_failed')
 
+
 @app.route('/api/auth/signup', methods=['POST'])
 def signup():
     try:
@@ -456,28 +442,32 @@ def _compute_trending_deals(limit=15):
 
     usecols = ['InvoiceDate', 'ProductID', 'Description', 'Brand',
                'Category', 'SubCategory', 'UnitPrice', 'ImageURL', 'Specifications']
+    # Load CSV
     df = pd.read_csv(DEALS_DATA_FILE, usecols=lambda c: c in usecols)
     if df.empty:
         return [], None
-
+    
+    # Clean Data
     df['UnitPrice']   = pd.to_numeric(df['UnitPrice'], errors='coerce')
     df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'], errors='coerce').fillna(pd.Timestamp('1970-01-01'))
     df = df.dropna(subset=['ProductID', 'Description', 'UnitPrice'])
     df = df[df['UnitPrice'] > 0]
     if df.empty:
         return [], None
-
+    
+    # Aggregate by ProductID
     grouped    = df.groupby('ProductID')['UnitPrice'].agg(['max', 'min', 'mean', 'count']).rename(
         columns={'max': 'max_price', 'min': 'min_price', 'mean': 'avg_price', 'count': 'samples'})
     latest_idx = df.groupby('ProductID')['InvoiceDate'].idxmax()
     latest     = df.loc[latest_idx].merge(grouped, left_on='ProductID', right_index=True, how='left')
-
+    
+    # Get latest price entry
     latest['discount_pct'] = (
         ((latest['max_price'] - latest['UnitPrice']) / latest['max_price']) * 100
     ).replace([np.inf, -np.inf], 0).fillna(0).clip(lower=0)
     latest = latest.sort_values(['discount_pct', 'InvoiceDate', 'samples'],
                                 ascending=[False, False, False])
-
+    
     deals = []
     for _, row in latest.head(max(limit, 20)).iterrows():
         name = str(row.get('Description', '')).strip()
