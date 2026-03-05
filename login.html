@@ -776,6 +776,8 @@
       showError('Google account email is required to continue.', 'signin');
     } else if (queryParams.get('error') === 'facebook_auth_failed') {
       showError('Facebook sign-in failed. Please try again.', 'signin');
+    } else if (queryParams.get('error') === 'facebook_access_denied') {
+      showError('Facebook sign-in was cancelled.', 'signin');
     } else if (queryParams.get('error') === 'facebook_not_configured') {
       showError('Facebook sign-in is not configured on the server.', 'signin');
     } else if (queryParams.get('error') === 'facebook_email_required') {

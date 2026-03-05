@@ -33,12 +33,6 @@ from dotenv import load_dotenv
 from scraper import analyze_url
 
 app = Flask(__name__, static_folder='static')
-app.secret_key = secrets.token_hex(32)
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
-CORS(app, supports_credentials=True)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, 'users.csv')
 DEALS_DATA_FILE = os.path.join(BASE_DIR, 'data.csv')
@@ -47,6 +41,12 @@ FRONTEND_HTML_FILES = {'index.html', 'login.html'}
 
 # Load local .env values (OAuth client IDs/secrets, etc.) for local dev runs.
 load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+app.secret_key = os.environ.get("SECRET_KEY", "") or secrets.token_hex(32)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+CORS(app, supports_credentials=True)
 
 # Google LogIN and Facebook Login setup using OAuth
 
@@ -73,7 +73,11 @@ if FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET:
         access_token_url="https://graph.facebook.com/v19.0/oauth/access_token",
         authorize_url="https://www.facebook.com/v19.0/dialog/oauth",
         api_base_url="https://graph.facebook.com/v19.0/",
-        client_kwargs={"scope": "email public_profile"},
+        # Facebook token endpoint expects client credentials in body/query, not HTTP Basic.
+        client_kwargs={
+            "scope": "email public_profile",
+            "token_endpoint_auth_method": "client_secret_post",
+        },
     )
 # ── caches ────────────────────────────────────────────────────────────────────
 _TRENDING_CACHE: dict = {'mtime': None, 'deals': [], 'generated_at': None}
@@ -350,6 +354,12 @@ def facebook_start():
 def facebook_callback():
     if not (FACEBOOK_CLIENT_ID and FACEBOOK_CLIENT_SECRET):
         return redirect('/login.html?error=facebook_not_configured')
+    if request.args.get('error'):
+        code = str(request.args.get('error', 'facebook_auth_failed')).strip().lower()
+        print(f"[facebook_callback] provider error: {request.args}")
+        if code in {'access_denied', 'user_denied'}:
+            return redirect('/login.html?error=facebook_access_denied')
+        return redirect('/login.html?error=facebook_auth_failed')
     try:
         oauth.facebook.authorize_access_token()
         profile = oauth.facebook.get('me?fields=id,email,first_name,last_name,name').json()
