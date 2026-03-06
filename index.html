@@ -16,6 +16,7 @@
       --bg:        #0a0a0a;
       --surface:   #111111;
       --surface2:  #181818;
+      --nav-bg:    rgba(10,10,10,.85);
       --border:    #242424;
       --border2:   #2e2e2e;
       --text:      #e8e2d9;
@@ -24,6 +25,21 @@
       --accent2:   #ff4d2e;      /* hot red-orange */
       --accent3:   #3cffdf;      /* cyan */
       --gold:      #d4a843;
+    }
+    /*light theme related, 06.03.26*/
+    body.light-theme {
+      --bg:        #EDF6F9;
+      --surface:   #ffffff;
+      --surface2:  #eef1f4;
+      --nav-bg:    rgba(255,255,255,.9);
+      --border:    #d7dde3;
+      --border2:   #c5ced8;
+      --text:      #1b2430;
+      --muted:     #6f7c8a;
+      --accent:    #2563eb;
+      --accent2:   #ef4444;
+      --accent3:   #0ea5a8;
+      --gold:      #b7791f;
     }
 
     html { scroll-behavior: smooth; }
@@ -73,7 +89,7 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 2.5rem;
       height: 64px;
-      background: rgba(10,10,10,.85);
+      background: var(--nav-bg);
       backdrop-filter: blur(20px) saturate(150%);
       border-bottom: 1px solid var(--border);
     }
@@ -128,6 +144,27 @@
     .nav-right {
       display: flex; align-items: center; gap: 1rem;
     }
+
+    /*light theme toggle animation, 06.03.26*/
+    .theme-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: .44rem .95rem;
+      border: 1px solid var(--border2);
+      border-radius: 999px;
+      background: var(--surface2);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .7rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: none;
+      transition: border-color .2s, color .2s, background .2s;
+    }
+    .theme-toggle:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--surface);
+    }
     .btn-login {
       display: flex; align-items: center; gap: 8px;
       padding: .45rem 1.2rem;
@@ -146,6 +183,12 @@
     .btn-login:hover { background: #d4ff5c; transform: translateY(-1px); }
     .btn-login svg { width: 14px; height: 14px; }
 
+    body.light-theme::before { opacity: .4; }
+    body.light-theme .hero::after {
+      background-image:
+        linear-gradient(rgba(37,99,235,.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37,99,235,.06) 1px, transparent 1px);
+    }
     /*  HERO  */
     .hero {
       position: relative;
@@ -584,6 +627,12 @@
       border: 1px solid var(--border2);
       border-radius: 3px;
       color: var(--text2);
+    }
+    /*light theme related, 06.03.26*/
+    body.light-theme .store-tag {
+      background: rgba(255,255,255,.88);
+      color: var(--text);
+      border-color: var(--border2);
     }
 
     /*  CARD ACTIONS (Deal + Compare)  */
@@ -2598,6 +2647,7 @@
   </ul>
 
   <div class="nav-right">
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch theme">Light</button>
     <button class="btn-login">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
@@ -3597,6 +3647,41 @@
 <div class="compare-toast" id="compareToast"></div>
 
 <script>
+  /*light theme toggle, 06.03.26*/
+  (function () {
+    const THEME_KEY = 'eazzy-theme';
+
+    function applyTheme(theme) {
+      const useLight = theme === 'light';
+      document.body.classList.toggle('light-theme', useLight);
+      const toggleBtn = document.getElementById('themeToggle');
+      if (toggleBtn) toggleBtn.textContent = useLight ? 'Dark' : 'Light';
+      const themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', useLight ? '#f4f5f7' : '#0a0a0a');
+    }
+
+    function initThemeToggle() {
+      const savedTheme = localStorage.getItem(THEME_KEY);
+      const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      const initialTheme = savedTheme || (prefersLight ? 'light' : 'dark');
+      applyTheme(initialTheme);
+
+      const btn = document.getElementById('themeToggle');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const nextTheme = document.body.classList.contains('light-theme') ? 'dark' : 'light';
+        localStorage.setItem(THEME_KEY, nextTheme);
+        applyTheme(nextTheme);
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initThemeToggle, { once: true });
+    } else {
+      initThemeToggle();
+    }
+  })();
+
   /*  CURSOR (desktop only – hidden on touch to avoid jank)  */
   const cur = document.getElementById('cursor');
   const ring = document.getElementById('cursor-ring');

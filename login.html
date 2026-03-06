@@ -16,16 +16,38 @@
       --surface:    #111111;
       --surface2:   #161616;
       --surface3:   #1c1c1c;
+      --nav-bg:     rgba(12,12,12,.92);
       --border:     #222222;
       --border2:    #2a2a2a;
       --text:       #e6e0d8;
       --text2:      #a09890;
       --muted:      #5a5450;
       --accent:     #c9ff3c;
+      --accent-rgb: 201,255,60;
       --accent-dim: rgba(201,255,60,.08);
       --accent2:    #ff4d2e;
       --accent3:    #3cffdf;
       --gold:       #c9a84c;
+    }
+
+    /*light theme*/
+    body.light-theme {
+      --bg:         #f4f5f7;
+      --surface:    #ffffff;
+      --surface2:   #eef1f4;
+      --surface3:   #e8edf2;
+      --nav-bg:     rgba(255,255,255,.92);
+      --border:     #d7dde3;
+      --border2:    #c5ced8;
+      --text:       #1b2430;
+      --text2:      #5a6675;
+      --muted:      #6f7c8a;
+      --accent:     #2563eb;
+      --accent-rgb: 37,99,235;
+      --accent-dim: rgba(37,99,235,.08);
+      --accent2:    #ef4444;
+      --accent3:    #0ea5a8;
+      --gold:       #b7791f;
     }
 
     html, body { min-height: 100%; }
@@ -44,7 +66,7 @@
       height: 56px;
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 2.5rem;
-      background: rgba(12,12,12,.92);
+      background: var(--nav-bg);
       backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
     }
@@ -84,6 +106,29 @@
       color: var(--muted);
     }
     .nav-secure svg { width: 12px; height: 12px; color: var(--accent); }
+   /*new add */ 
+    .nav-tools {
+      display: flex; align-items: center; gap: .55rem;
+    }
+
+    .theme-toggle {
+      border: 1px solid var(--border2);
+      background: var(--surface2);
+      color: var(--text2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .64rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border-radius: 999px;
+      padding: .34rem .72rem;
+      cursor: pointer;
+      transition: border-color .2s, color .2s, background .2s;
+    }
+    .theme-toggle:hover {
+      border-color: rgba(37,99,235,.35);
+      color: var(--text);
+      background: var(--surface3);
+    }
 
     /*  LAYOUT  */
     .layout {
@@ -160,7 +205,7 @@
       color: var(--text); margin-bottom: 1.8rem;
     }
     .brand-headline .stroke {
-      -webkit-text-stroke: 1.5px rgba(201,255,60,.55);
+      -webkit-text-stroke: 1.5px rgba(var(--accent-rgb), .55);
       color: transparent;
     }
     .brand-headline .red { color: var(--accent2); }
@@ -489,9 +534,13 @@
       <div class="logo-pip"></div>
       EazZy<em>Shop</em>
     </a>
-    <div class="nav-secure">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-      256-bit SSL
+    <!-- theme change, new add 06.03.26 -->
+    <div class="nav-tools">
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch theme">Light</button>
+      <div class="nav-secure">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        256-bit SSL
+      </div>
     </div>
   </nav>
 
@@ -716,8 +765,37 @@
   </div>
 
   <script>
+    /*theme related */
+    const THEME_KEY = 'eazzy-theme';
     /* OAUTH new addition*/
     const API_URL = 'http://localhost:5000';
+
+    /*theme toggle button addition , 06.03.26*/
+    function applyTheme(theme) {
+      const useLight = theme === 'light';
+      document.body.classList.toggle('light-theme', useLight);
+      const btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = useLight ? 'Dark' : 'Light';
+      const themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', useLight ? '#f4f5f7' : '#0c0c0c');
+    }
+
+    function initThemeToggle() {
+      const savedTheme = localStorage.getItem(THEME_KEY);
+      const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      const initialTheme = savedTheme || (prefersLight ? 'light' : 'dark');
+      applyTheme(initialTheme);
+
+      const btn = document.getElementById('themeToggle');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const nextTheme = document.body.classList.contains('light-theme') ? 'dark' : 'light';
+        localStorage.setItem(THEME_KEY, nextTheme);
+        applyTheme(nextTheme);
+      });
+    }
+
+    initThemeToggle();
 
     function startGoogleAuth() {
       window.location.href = `${API_URL}/api/auth/google/start`;
@@ -776,6 +854,8 @@
       showError('Google account email is required to continue.', 'signin');
     } else if (queryParams.get('error') === 'facebook_auth_failed') {
       showError('Facebook sign-in failed. Please try again.', 'signin');
+    } else if (queryParams.get('error') === 'facebook_access_denied') {
+      showError('Facebook sign-in was cancelled.', 'signin');
     } else if (queryParams.get('error') === 'facebook_not_configured') {
       showError('Facebook sign-in is not configured on the server.', 'signin');
     } else if (queryParams.get('error') === 'facebook_email_required') {
