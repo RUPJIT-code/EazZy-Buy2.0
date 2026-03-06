@@ -1,11 +1,3 @@
-"""
-nexabuy/scraper.py
-==================
-Uses ScraperAPI's dedicated Amazon/Flipkart structured-data endpoint first
-(returns clean JSON – no HTML parsing needed, very fast).
-Falls back to HTML scraping if structured endpoint fails.
-"""
-
 from __future__ import annotations
 import json, os, re, random
 from datetime import datetime
@@ -23,12 +15,14 @@ from sklearn.linear_model import LinearRegression
 # de53cb944e251074ae54345f7eef6f07
 SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "86ec04ee54df584ba6a0d7a64a634d5b")
 
+# Cloudscraper Detection
 try:
     import cloudscraper as _cs_mod
     _HAS_CS = True
 except ImportError:
     _HAS_CS = False
 
+# Different browser identities.
 UAS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -260,14 +254,18 @@ def _predict_with_linear_regression(product_name: str, current_price: Optional[f
     recommendation = "WAIT" if max_savings > (float(current_price) * 0.03) else "BUY_NOW"
 
     try:
-        r2_score = float(model.score(X, y))
+        raw_r2 = float(model.score(X, y))
     except Exception:
-        r2_score = 0.0
-    r2_score = max(0.0, min(1.0, r2_score))
-    sample_factor = min(1.0, len(daily) / 90.0)
+        raw_r2 = -1.0
+    fit_factor = max(0.0, min(1.0, (raw_r2 + 1.0) / 2.0))
+    sample_factor = min(1.0, len(daily) / 60.0)
     match_factor = float(matched["MatchScore"].mean()) if len(matched) else 0.0
-    confidence = 0.25 + (0.45 * r2_score) + (0.20 * sample_factor) + (0.10 * match_factor)
-    confidence = max(0.2, min(0.95, confidence))
+    confidence = 0.35 + (0.35 * fit_factor) + (0.20 * sample_factor) + (0.10 * match_factor)
+    confidence = max(0.35, min(0.96, confidence))
+    if len(daily) < 15:
+        confidence = min(confidence, 0.78)
+    elif len(daily) < 30:
+        confidence = min(confidence, 0.88)
 
     warning = ""
     if len(daily) < 20:
