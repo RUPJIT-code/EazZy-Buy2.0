@@ -289,6 +289,62 @@
       animation: fadeUp .8s .3s ease both;
     }
 
+    .check-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: .7rem;
+    }
+    .check-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .7rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .check-option {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: none;
+    }
+    .check-option input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .check-option span {
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      border-radius: 999px;
+      padding: .45rem .95rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .7rem;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      transition: border-color .2s, background .2s, color .2s, transform .2s;
+      white-space: nowrap;
+    }
+    .check-option span svg { width: 14px; height: 14px; }
+    .check-option:hover span {
+      border-color: rgba(201,255,60,.5);
+      background: rgba(201,255,60,.08);
+      color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .check-option input:checked + span {
+      border-color: rgba(201,255,60,.5);
+      background: rgba(201,255,60,.12);
+      color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(201,255,60,.12);
+    }
+
     .search-bar {
       display: flex;
       align-items: center;
@@ -1682,6 +1738,19 @@
     .prediction-item .k { font-family: 'JetBrains Mono', monospace; font-size: .65rem; color: var(--muted); margin-bottom: .2rem; }
     .prediction-item .v { font-weight: 700; font-size: .9rem; }
     .analysis-graph-wrap { border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: .5rem; }
+    .review-meta { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .9rem; font-family: 'JetBrains Mono', monospace; font-size: .72rem; color: var(--muted); }
+    .review-meta span { padding: .25rem .5rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); }
+    .review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin-bottom: 1rem; }
+    .review-lists { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; }
+    .review-list { border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); padding: .7rem; }
+    .review-list-title { font-family: 'JetBrains Mono', monospace; font-size: .7rem; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: .6rem; }
+    .review-item { border: 1px solid var(--border); border-radius: 8px; padding: .6rem; background: var(--surface); margin-bottom: .6rem; }
+    .review-item:last-child { margin-bottom: 0; }
+    .review-item-head { display: flex; justify-content: space-between; gap: .6rem; font-family: 'JetBrains Mono', monospace; font-size: .68rem; color: var(--muted); margin-bottom: .4rem; }
+    .review-item-text { font-size: .82rem; color: var(--text); line-height: 1.5; }
+    .review-item-reasons { font-family: 'JetBrains Mono', monospace; font-size: .65rem; color: var(--accent2); margin-top: .35rem; }
+    .review-empty { font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: var(--muted); }
+    .review-summary { margin-top: .9rem; border: 1px solid rgba(60,255,223,.35); border-radius: 8px; background: rgba(60,255,223,.08); color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: .75rem; line-height: 1.5; padding: .6rem .7rem; }
     .platform-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
     .platform-card { border: 1px solid var(--border); background: var(--surface2); border-radius: 10px; padding: .8rem; }
     .platform-head { font-family: 'JetBrains Mono', monospace; font-size: .68rem; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin-bottom: .5rem; }
@@ -2604,6 +2673,8 @@
       .search-bar { display: grid; grid-template-columns: auto minmax(0, 1fr); border-radius: 10px; }
       .search-bar input { min-height: 48px; font-size: 16px; }
       .btn-analyze { min-height: 44px; padding: .85rem 1.2rem; margin: 8px 0 10px; grid-column: 1 / -1; justify-self: center; }
+      .review-grid { grid-template-columns: 1fr 1fr; }
+      .review-lists { grid-template-columns: 1fr; }
       .feature-strip { flex-direction: column; }
       .feature-item { width: 100%; padding: 1rem 1.2rem; border-right: none; border-bottom: 1px solid var(--border); }
       .feature-item:last-child { border-bottom: none; }
@@ -2621,6 +2692,7 @@
       nav { padding: 0 .75rem; }
       .section { padding: 2rem .75rem; }
       .hero-sub { font-size: .9rem; }
+      .review-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -2677,6 +2749,38 @@
     </p>
 
     <div class="search-wrap">
+      <div class="check-options" role="group" aria-label="Check options">
+        <span class="check-label">Check:</span>
+        <label class="check-option">
+          <input type="radio" name="checkOption" value="price">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 19h16M6 15l3-3 3 3 6-6"/>
+            </svg>
+            Price History
+          </span>
+        </label>
+        <label class="check-option">
+          <input type="radio" name="checkOption" value="reviews">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 3l8 4v5c0 5-3.6 7.8-8 9-4.4-1.2-8-4-8-9V7l8-4z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+            Fake Review
+          </span>
+        </label>
+        <label class="check-option">
+          <input type="radio" name="checkOption" value="both" checked>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M4 19h16M6 15l3-3 3 3 6-6"/>
+              <path d="M12 3l8 4v5c0 5-3.6 7.8-8 9-4.4-1.2-8-4-8-9V7l8-4z"/>
+            </svg>
+            Both
+          </span>
+        </label>
+      </div>
       <div class="search-bar">
         <div class="search-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -2838,6 +2942,7 @@
   <div class="analysis-tabs">
     <button class="analysis-tab-btn active" data-analysis-tab="overview">Overview</button>
     <button class="analysis-tab-btn" data-analysis-tab="prediction">Prediction</button>
+    <button class="analysis-tab-btn" data-analysis-tab="reviews">Reviews</button>
     <!-- <button class="analysis-tab-btn" data-analysis-tab="platforms">Platforms</button> -->
   </div>
 
@@ -2853,6 +2958,64 @@
     <div class="analysis-panel-card">
       <div class="analysis-graph-wrap" id="analysisGraphWrap"></div>
       <div class="prediction-list" id="analysisPredictionList"></div>
+    </div>
+  </div>
+
+  <div class="analysis-panel" id="analysisPanelReviews">
+    <div class="analysis-panel-card">
+      <div class="review-meta">
+        <span id="reviewAvgRating">Average Rating: N/A</span>
+        <span id="reviewTotalRatings">Total Ratings: N/A</span>
+        <span id="reviewTotalReviews">Total Reviews: N/A</span>
+      </div>
+
+      <div class="review-grid">
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Risk Level</div>
+          <div class="analysis-stat-value" id="reviewRiskLevel">N/A</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Fake %</div>
+          <div class="analysis-stat-value" id="reviewFakePct">0%</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Real %</div>
+          <div class="analysis-stat-value" id="reviewRealPct">0%</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Reviews Analyzed</div>
+          <div class="analysis-stat-value" id="reviewTotalAnalyzed">0</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Duplicate Signals</div>
+          <div class="analysis-stat-value" id="reviewDuplicateSignals">0</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Promo Signals</div>
+          <div class="analysis-stat-value" id="reviewPromoSignals">0</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Mismatch Signals</div>
+          <div class="analysis-stat-value" id="reviewMismatchSignals">0</div>
+        </div>
+        <div class="analysis-stat">
+          <div class="analysis-stat-label">Short Reviews</div>
+          <div class="analysis-stat-value" id="reviewShortSignals">0</div>
+        </div>
+      </div>
+
+      <div class="review-lists">
+        <div class="review-list">
+          <div class="review-list-title">Most Suspicious</div>
+          <div id="reviewSuspiciousList" class="review-items"></div>
+        </div>
+        <div class="review-list">
+          <div class="review-list-title">Sample Real Reviews</div>
+          <div id="reviewRealList" class="review-items"></div>
+        </div>
+      </div>
+
+      <div class="review-summary" id="reviewSummary" style="display:none;"></div>
     </div>
   </div>
 
@@ -5322,6 +5485,20 @@
         btn.disabled = false;
       }
 
+      function escapeHtml(value) {
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function setText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+      }
+
       initAnalysisTabs();
 
       const existingBtn = document.querySelector('.btn-analyze');
@@ -5330,7 +5507,7 @@
       const cleanBtn = existingBtn.cloneNode(true);
       existingBtn.parentNode.replaceChild(cleanBtn, existingBtn);
 
-      cleanBtn.onclick = async function () {
+      function getInputUrl() {
         const input = document.querySelector('.search-bar input');
         const url = String(input && input.value ? input.value : '').trim();
 
@@ -5341,51 +5518,263 @@
             input.style.borderColor = '';
             input.placeholder = 'Paste your Amazon, eBay or any product link here...';
           }, 2500);
-          return;
+          return null;
+        }
+        return { input, url };
+      }
+
+      function buildReviewItem(item, showReasons) {
+        const textRaw = String(item && item.text ? item.text : '').trim();
+        const text = textRaw.length > 260 ? `${textRaw.slice(0, 257)}...` : textRaw;
+        const ratingNum = toNumber(item && item.rating);
+        const rating = ratingNum !== null ? `Rating: ${ratingNum.toFixed(1)}` : 'Rating: N/A';
+        const scoreNum = toNumber(item && item.fake_score);
+        const score = scoreNum !== null ? scoreNum.toFixed(2) : 'N/A';
+        const reasons = Array.isArray(item && item.reasons) ? item.reasons.filter(Boolean).join(', ') : '';
+
+        return `
+          <div class="review-item">
+            <div class="review-item-head">
+              <span>${escapeHtml(rating)}</span>
+              <span>Score: ${escapeHtml(score)}</span>
+            </div>
+            <div class="review-item-text">${escapeHtml(text)}</div>
+            ${showReasons && reasons ? `<div class="review-item-reasons">${escapeHtml(reasons)}</div>` : ''}
+          </div>
+        `;
+      }
+
+      function renderReviewPanel(data, focusTab) {
+        const section = document.getElementById('analysisResults');
+        if (!section) return;
+
+        const review = data.review_detection || {};
+        const meta = data.reviews_meta || {};
+        const signals = review.signals || {};
+
+        const avgRatingNum = toNumber(meta.average_rating);
+        setText('reviewAvgRating', `Average Rating: ${avgRatingNum !== null ? avgRatingNum.toFixed(1) : 'N/A'}`);
+        setText('reviewTotalRatings', `Total Ratings: ${toNumber(meta.total_ratings) !== null ? meta.total_ratings : 'N/A'}`);
+        setText('reviewTotalReviews', `Total Reviews: ${toNumber(meta.total_reviews) !== null ? meta.total_reviews : 'N/A'}`);
+
+        const risk = String(review.risk_level || 'LOW').toUpperCase();
+        const fakePct = toNumber(review.fake_percentage);
+        const realPct = toNumber(review.real_percentage);
+
+        setText('reviewRiskLevel', risk);
+        setText('reviewFakePct', fakePct !== null ? `${fakePct}%` : 'N/A');
+        setText('reviewRealPct', realPct !== null ? `${realPct}%` : 'N/A');
+        setText('reviewTotalAnalyzed', toNumber(review.total_reviews_analyzed) !== null ? review.total_reviews_analyzed : 0);
+
+        setText('reviewDuplicateSignals', toNumber(signals.duplicate_reviews) !== null ? signals.duplicate_reviews : 0);
+        setText('reviewPromoSignals', toNumber(signals.promo_language_reviews) !== null ? signals.promo_language_reviews : 0);
+        setText('reviewMismatchSignals', toNumber(signals.rating_mismatch_reviews) !== null ? signals.rating_mismatch_reviews : 0);
+        setText('reviewShortSignals', toNumber(signals.short_reviews) !== null ? signals.short_reviews : 0);
+
+        const suspiciousList = document.getElementById('reviewSuspiciousList');
+        const suspicious = Array.isArray(review.top_suspicious_reviews) ? review.top_suspicious_reviews : [];
+        suspiciousList.innerHTML = suspicious.length
+          ? suspicious.map((item) => buildReviewItem(item, true)).join('')
+          : '<div class="review-empty">No suspicious reviews found in the sampled set.</div>';
+
+        const realList = document.getElementById('reviewRealList');
+        const realSamples = Array.isArray(review.sample_real_reviews) ? review.sample_real_reviews : [];
+        realList.innerHTML = realSamples.length
+          ? realSamples.map((item) => buildReviewItem(item, false)).join('')
+          : '<div class="review-empty">No real-review samples available yet.</div>';
+
+        const summaryParts = [];
+        if (review.summary) summaryParts.push(String(review.summary).trim());
+        if (data.warning) summaryParts.push(String(data.warning).trim());
+        const combinedSummary = summaryParts.filter(Boolean).join(' ');
+
+        const reviewSummaryEl = document.getElementById('reviewSummary');
+        if (reviewSummaryEl) {
+          if (combinedSummary) {
+            reviewSummaryEl.style.display = 'block';
+            reviewSummaryEl.textContent = combinedSummary;
+          } else {
+            reviewSummaryEl.style.display = 'none';
+            reviewSummaryEl.textContent = '';
+          }
         }
 
-        setAnalyzeButtonState(this, 'busy');
+        section.style.display = 'block';
+        if (focusTab) setAnalysisTab('reviews');
+      }
 
+      function renderFakeReviewHeader(data, submittedUrl) {
+        const section = document.getElementById('analysisResults');
+        if (!section) return;
+
+        const product = data.product || {};
+        const review = data.review_detection || {};
+
+        const productName = String(product.name || data.product_name || 'Product');
+        const sourceLabel = String(data.source_platform || '').toUpperCase() || 'N/A';
+
+        document.getElementById('analysisName').textContent = productName;
+        document.getElementById('analysisSource').textContent = `Source: ${sourceLabel}`;
+        document.getElementById('analysisCurrentPrice').textContent = formatInr(product.current_price);
+        document.getElementById('analysisCheapest').textContent = 'Cheapest: N/A';
+        document.getElementById('analysisDiff').textContent = 'Diff: N/A';
+
+        const risk = String(review.risk_level || 'LOW').toUpperCase();
+        const recoEl = document.getElementById('analysisRecommendation');
+        const riskClass = (risk === 'HIGH' || risk === 'MEDIUM') ? 'wait' : 'buy';
+        recoEl.className = `analysis-reco ${riskClass}`;
+        recoEl.textContent = `Review Risk: ${risk}`;
+
+        const confNum = toNumber(review.confidence);
+        document.getElementById('analysisConfidence').textContent = confNum !== null ? `${Math.round(confNum * 100)}%` : 'N/A';
+        document.getElementById('analysisSavings').textContent = 'N/A';
+        document.getElementById('analysisBestTime').textContent = 'N/A';
+        document.getElementById('analysisSavingsPct').textContent = 'N/A';
+
+        const warningEl = document.getElementById('analysisWarning');
+        const warningText = String(data.warning || '').trim();
+        if (warningText) {
+          warningEl.style.display = 'block';
+          warningEl.textContent = warningText;
+        } else {
+          warningEl.style.display = 'none';
+          warningEl.textContent = '';
+        }
+
+        const image = String(product.image_url || '').trim();
+        const imgEl = document.getElementById('analysisImage');
+        const placeholderImage = buildAnalysisPlaceholderImage(productName);
+        imgEl.onerror = () => {
+          imgEl.onerror = null;
+          imgEl.src = placeholderImage;
+        };
+        imgEl.src = image || placeholderImage;
+
+        const resolvedUrl = String(data.resolved_url || data.source_url || submittedUrl || '').trim();
+        const urlEl = document.getElementById('analysisUrl');
+        urlEl.href = resolvedUrl || '#';
+        urlEl.textContent = resolvedUrl || 'No URL available';
+
+        const buyBtn = document.getElementById('analysisBuyBtn');
+        buyBtn.style.display = resolvedUrl ? 'inline-flex' : 'none';
+
+        const summaryText = String(review.summary || '').trim();
+        document.getElementById('analysisSummary').textContent = summaryText || 'Review detection summary unavailable.';
+
+        document.getElementById('analysisGraphWrap').innerHTML = '<div style="font-family:JetBrains Mono,monospace;font-size:.75rem;color:var(--muted);padding:.5rem;">Price prediction not generated for review checks.</div>';
+        document.getElementById('analysisPredictionList').innerHTML = '';
+
+        section.style.display = 'block';
+        setAnalysisTab('reviews');
+        setTimeout(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+      }
+
+      function getSelectedCheckOption() {
+        const selected = document.querySelector('input[name="checkOption"]:checked');
+        return selected ? selected.value : 'both';
+      }
+
+      async function fetchJson(endpoint, url) {
+        const response = await fetch(`${API_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ url })
+        });
+
+        const raw = await response.text();
+        let data = null;
         try {
-          const response = await fetch(`${API_URL}/api/analyze`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ url })
-          });
+          data = raw ? JSON.parse(raw) : {};
+        } catch (parseErr) {
+          throw new Error(`Server returned non-JSON response (HTTP ${response.status}).`);
+        }
 
-          const raw = await response.text();
-          let data = null;
-          try {
-            data = raw ? JSON.parse(raw) : {};
-          } catch (parseErr) {
-            throw new Error(`Server returned non-JSON response (HTTP ${response.status}).`);
+        if (response.status === 401) {
+          alert('Session expired. Please login again.');
+          window.location.href = '/login.html';
+          return null;
+        }
+
+        if (!data.success) {
+          throw new Error(data.error || 'Request failed');
+        }
+
+        return data;
+      }
+
+      async function runPriceAnalysis(url, focusTab) {
+        const data = await fetchJson('/api/analyze', url);
+        if (!data) return null;
+        renderAnalysis(data, url);
+        if (focusTab) setAnalysisTab(focusTab);
+
+        const analyzedCategory = inferAnalysisCategory(data, url);
+        if (analyzedCategory) {
+          if (typeof window.recordTrendingUserBehavior === 'function') {
+            window.recordTrendingUserBehavior(analyzedCategory);
           }
+          if (typeof window.loadTrendingDeals === 'function') {
+            window.loadTrendingDeals({ category: analyzedCategory, trigger: 'analysis' });
+          }
+        }
+        return data;
+      }
 
-          if (response.status === 401) {
-            alert('Session expired. Please login again.');
-            window.location.href = '/login.html';
+      async function runReviewDetection(url, renderHeader, focusTab) {
+        const data = await fetchJson('/api/reviews/fake-detection', url);
+        if (!data) return null;
+        if (renderHeader) renderFakeReviewHeader(data, url);
+        renderReviewPanel(data, focusTab);
+        return data;
+      }
+
+      cleanBtn.onclick = async function () {
+        const payload = getInputUrl();
+        if (!payload) return;
+
+        const { url } = payload;
+        const option = getSelectedCheckOption();
+
+        setAnalyzeButtonState(cleanBtn, 'busy');
+        try {
+          if (option === 'price') {
+            const priceData = await runPriceAnalysis(url, 'prediction');
+            if (!priceData) {
+              setAnalyzeButtonState(cleanBtn, 'idle');
+              return;
+            }
+            setAnalyzeButtonState(cleanBtn, 'done');
+            setTimeout(() => setAnalyzeButtonState(cleanBtn, 'idle'), 1400);
             return;
           }
 
-          if (!data.success) {
-            throw new Error(data.error || 'Analysis failed');
+          if (option === 'reviews') {
+            const reviewData = await runReviewDetection(url, true, true);
+            if (!reviewData) {
+              setAnalyzeButtonState(cleanBtn, 'idle');
+              return;
+            }
+            setAnalyzeButtonState(cleanBtn, 'done');
+            setTimeout(() => setAnalyzeButtonState(cleanBtn, 'idle'), 1400);
+            return;
           }
 
-          renderAnalysis(data, url);
-          const analyzedCategory = inferAnalysisCategory(data, url);
-          if (analyzedCategory) {
-            if (typeof window.recordTrendingUserBehavior === 'function') {
-              window.recordTrendingUserBehavior(analyzedCategory);
-            }
-            if (typeof window.loadTrendingDeals === 'function') {
-              window.loadTrendingDeals({ category: analyzedCategory, trigger: 'analysis' });
-            }
+          const priceData = await runPriceAnalysis(url);
+          if (!priceData) {
+            setAnalyzeButtonState(cleanBtn, 'idle');
+            return;
           }
-          setAnalyzeButtonState(this, 'done');
-          setTimeout(() => setAnalyzeButtonState(this, 'idle'), 1400);
+          try {
+            await runReviewDetection(url, false);
+          } catch (reviewErr) {
+            console.error('Review detection error:', reviewErr);
+            alert(`Price history loaded, but review check failed: ${reviewErr.message || 'Unknown error'}`);
+          }
+          setAnalyzeButtonState(cleanBtn, 'done');
+          setTimeout(() => setAnalyzeButtonState(cleanBtn, 'idle'), 1400);
         } catch (error) {
-          setAnalyzeButtonState(this, 'idle');
+          setAnalyzeButtonState(cleanBtn, 'idle');
           alert(error.message || 'Server connection error. Please check if the backend is running.');
           console.error('Analysis error:', error);
         }

@@ -1,10 +1,16 @@
 from __future__ import annotations
-import json, os, re, random
+
+import json
+import os
+import random
+import re
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from difflib import SequenceMatcher
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
-from typing import Optional
-from urllib.parse import quote_plus, urljoin, urlparse, unquote, parse_qs
+from html import unescape
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote_plus, urljoin, urlparse, unquote, parse_qs, urlencode
 
 import pandas as pd
 import requests
@@ -1160,6 +1166,761 @@ def _name_from_url(url: str) -> Optional[str]:
     except Exception: pass
     return None
 
+
+# =============================================================================
+# Fake review detection
+# =============================================================================
+
+REVIEW_ANALYSIS_CAP = 40
+REVIEW_PAGE_MAX = min(5, max(1, (REVIEW_ANALYSIS_CAP + 9) // 10))
+
+PROMO_PHRASES = [
+    "must buy", "highly recommended", "best product", "worth every penny",
+    "value for money", "awesome product", "excellent quality", "superb product",
+    "original product", "totally satisfied", "go for it", "just wow",
+]
+
+POSITIVE_WORDS = {
+    "good", "great", "excellent", "awesome", "best", "amazing", "love",
+    "satisfied", "perfect", "value", "quality", "fast", "durable", "happy",
+    "recommend", "smooth", "premium", "reliable", "fantastic",
+}
+
+NEGATIVE_WORDS = {
+    "bad", "worst", "poor", "fake", "broken", "damage", "defective",
+    "slow", "hate", "refund", "return", "cheap", "waste", "issue",
+    "problem", "disappointed", "terrible", "lag", "heating", "overheating",
+}
+
+
+def _parse_count(text: str) -> Optional[int]:
+    if not text:
+        return None
+    nums = re.findall(r"\d[\d,]*", str(text))
+    if not nums:
+        return None
+    try:
+        return int(nums[0].replace(",", ""))
+    except Exception:
+        return None
+
+
+def _parse_star_value(text: str) -> Optional[float]:
+    if not text:
+        return None
+    m = re.search(r"([0-5](?:\.\d+)?)", str(text))
+    if not m:
+        return None
+    try:
+        rating = float(m.group(1))
+        return rating if 0 <= rating <= 5 else None
+    except Exception:
+        return None
+
+
+def _extract_count_bundle(text: str) -> Tuple[Optional[int], Optional[int]]:
+    if not text:
+        return None, None
+    raw = str(text).lower()
+
+    ratings = None
+    reviews = None
+
+    m = re.search(r"(\d[\d,]*)\s*ratings?", raw)
+    if m:
+        ratings = _parse_count(m.group(1))
+
+    m = re.search(r"(\d[\d,]*)\s*reviews?", raw)
+    if m:
+        reviews = _parse_count(m.group(1))
+
+    if ratings is None and reviews is None:
+        num = _parse_count(raw)
+        if num is not None:
+            if "review" in raw:
+                reviews = num
+            else:
+                ratings = num
+
+    return ratings, reviews
+
+
+def _normalize_review_text(text: str) -> str:
+    cleaned = unescape(str(text or ""))
+    cleaned = cleaned.replace("\\n", " ").replace("\\r", " ").replace("\\t", " ")
+    cleaned = cleaned.replace('\\"', '"').replace("\\/", "/")
+    cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _review_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+def _with_query_param(url: str, key: str, value: str) -> str:
+    parts = urlparse(url)
+    qs = parse_qs(parts.query)
+    qs[key] = [str(value)]
+    return parts._replace(query=urlencode(qs, doseq=True)).geturl()
+
+
+def _extract_amazon_asin(url: str, soup: BeautifulSoup, html: str) -> Optional[str]:
+    for pattern in (r"/dp/([A-Z0-9]{8,12})", r"/gp/product/([A-Z0-9]{8,12})", r"/product/([A-Z0-9]{8,12})"):
+        m = re.search(pattern, url)
+        if m:
+            return m.group(1)
+
+    node = soup.select_one("input#ASIN, input[name='ASIN'], input[name='asin'], [data-asin]")
+    if node:
+        asin = node.get("value") or node.get("data-asin")
+        if asin:
+            return asin.strip()
+
+    m = re.search(r'"asin"\s*:\s*"([A-Z0-9]{8,12})"', html, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(r'"ASIN"\s*:\s*"([A-Z0-9]{8,12})"', html)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _extract_flipkart_pid(url: str, soup: BeautifulSoup, html: str) -> Optional[str]:
+    qs = parse_qs(urlparse(url).query)
+    pid = (qs.get("pid") or [None])[0]
+    if pid:
+        return pid
+
+    m = re.search(r'"pid"\s*:\s*"([^"]+)"', html)
+    if m:
+        return m.group(1)
+    m = re.search(r'"productId"\s*:\s*"([^"]+)"', html)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _extract_amazon_review_link(soup: BeautifulSoup) -> Optional[str]:
+    for sel in [
+        "a[data-hook='see-all-reviews-link-foot']",
+        "a[data-hook='see-all-reviews-link']",
+        "a[href*='product-reviews']",
+    ]:
+        node = soup.select_one(sel)
+        if node and node.get("href"):
+            return node.get("href")
+    return None
+
+
+def _extract_flipkart_review_link(soup: BeautifulSoup) -> Optional[str]:
+    for sel in ["a[href*='product-reviews']"]:
+        node = soup.select_one(sel)
+        if node and node.get("href"):
+            return node.get("href")
+    return None
+
+
+def _build_amazon_review_urls(url: str, soup: BeautifulSoup, html: str, max_pages: int) -> List[str]:
+    host = urlparse(url).netloc or "www.amazon.in"
+    base_host = f"https://{host}"
+
+    review_link = _extract_amazon_review_link(soup)
+    if review_link:
+        base = urljoin(base_host, review_link)
+    else:
+        asin = _extract_amazon_asin(url, soup, html)
+        if not asin:
+            return []
+        base = f"{base_host}/product-reviews/{asin}"
+
+    base = _with_query_param(base, "reviewerType", "all_reviews")
+    return [_with_query_param(base, "pageNumber", page) for page in range(1, max_pages + 1)]
+
+
+def _build_flipkart_review_urls(url: str, soup: BeautifulSoup, html: str, max_pages: int) -> List[str]:
+    base_host = "https://www.flipkart.com"
+    review_link = _extract_flipkart_review_link(soup)
+
+    if review_link:
+        base = urljoin(base_host, review_link)
+    else:
+        parsed = urlparse(url)
+        path = parsed.path
+        if "/product-reviews/" not in path and "/p/" in path:
+            path = path.replace("/p/", "/product-reviews/")
+        if "/product-reviews/" not in path:
+            return []
+        base = parsed._replace(path=path).geturl()
+
+    pid = _extract_flipkart_pid(url, soup, html)
+    if pid:
+        base = _with_query_param(base, "pid", pid)
+    return [_with_query_param(base, "page", page) for page in range(1, max_pages + 1)]
+
+
+def _merge_review_lists(out: List[dict], extra: List[dict], limit: int, seen: Optional[set] = None) -> set:
+    if seen is None:
+        seen = set(_review_key(r.get("text", "")) for r in out if r.get("text"))
+    for item in extra or []:
+        _append_review(out, seen, text=item.get("text", ""), rating=item.get("rating"), title=item.get("title", ""), max_items=limit)
+        if len(out) >= limit:
+            break
+    return seen
+
+
+def _augment_reviews_with_pages(
+    platform: str,
+    url: str,
+    base_soup: BeautifulSoup,
+    base_html: str,
+    payload: dict,
+) -> dict:
+    reviews = list(payload.get("reviews") or [])
+    if len(reviews) >= REVIEW_ANALYSIS_CAP:
+        payload["reviews"] = reviews[:REVIEW_ANALYSIS_CAP]
+        return payload
+
+    max_pages = REVIEW_PAGE_MAX
+    if platform == "amazon":
+        review_urls = _build_amazon_review_urls(url, base_soup, base_html, max_pages)
+        extractor = _extract_amazon_reviews
+    else:
+        review_urls = _build_flipkart_review_urls(url, base_soup, base_html, max_pages)
+        extractor = _extract_flipkart_reviews
+
+    if not review_urls:
+        return payload
+
+    seen = set(_review_key(r.get("text", "")) for r in reviews if r.get("text"))
+    no_new_pages = 0
+    for page_url in review_urls:
+        if len(reviews) >= REVIEW_ANALYSIS_CAP:
+            break
+        page_html = _fetch_product_html(page_url, platform)
+        if not page_html:
+            continue
+        page_soup = BeautifulSoup(page_html, "html.parser")
+        page_payload = extractor(page_soup, page_html, limit=REVIEW_ANALYSIS_CAP)
+
+        before = len(reviews)
+        seen = _merge_review_lists(reviews, page_payload.get("reviews", []), REVIEW_ANALYSIS_CAP, seen=seen)
+        if len(reviews) == before:
+            no_new_pages += 1
+            if no_new_pages >= 2:
+                break
+        else:
+            no_new_pages = 0
+
+        if payload.get("average_rating") is None and page_payload.get("average_rating") is not None:
+            payload["average_rating"] = page_payload.get("average_rating")
+
+        for key in ("total_ratings", "total_reviews"):
+            page_val = page_payload.get(key)
+            base_val = payload.get(key)
+            if isinstance(page_val, int) and (base_val is None or (isinstance(base_val, int) and page_val > base_val)):
+                payload[key] = page_val
+
+    payload["reviews"] = reviews
+    return payload
+
+
+def _fetch_product_html(url: str, platform: str) -> Optional[str]:
+    resp = None
+    platform = str(platform or "").strip().lower()
+
+    if platform == "amazon":
+        resp = _scraperapi_html(url, render=False, timeout=35)
+        if not resp or _blocked(resp.text):
+            resp = _direct_fetch(url, "https://www.amazon.in/")
+        if (not resp or _blocked(resp.text)) and SCRAPER_API_KEY:
+            resp = _scraperapi_html(url, render=True, timeout=40)
+    elif platform == "flipkart":
+        resp = _scraperapi_html(url, render=False, timeout=30)
+        if not resp or _blocked(resp.text):
+            resp = _direct_fetch(url, "https://www.flipkart.com/", fast=True)
+        if (not resp or _blocked(resp.text)) and SCRAPER_API_KEY:
+            resp = _scraperapi_html(url, render=True, timeout=35)
+
+    if not resp or _blocked(resp.text):
+        return None
+    return resp.text
+
+
+def _append_review(
+    out: List[dict],
+    seen: set,
+    text: str,
+    rating: Optional[float] = None,
+    title: str = "",
+    max_items: int = 80,
+) -> None:
+    body = _normalize_review_text(text)
+    heading = _normalize_review_text(title)
+    merged = f"{heading}. {body}".strip(". ").strip() if heading else body
+    if not merged or len(merged) < 20:
+        return
+
+    key = _review_key(merged)
+    if not key or len(key) < 12 or key in seen:
+        return
+
+    seen.add(key)
+    out.append({
+        "text": merged[:700],
+        "rating": rating if isinstance(rating, (int, float)) else None,
+    })
+    if len(out) > max_items:
+        del out[max_items:]
+
+
+def _extract_amazon_reviews(soup: BeautifulSoup, html: str, limit: int = 80) -> dict:
+    reviews: List[dict] = []
+    seen = set()
+
+    for card in soup.select("div[data-hook='review']"):
+        title_el = card.select_one("a[data-hook='review-title'] span, span[data-hook='review-title'] span, [data-hook='review-title']")
+        body_el = card.select_one("span[data-hook='review-body'] span, span[data-hook='review-body'], span[data-hook='review-collapsed']")
+        rate_el = card.select_one("i[data-hook='review-star-rating'] span.a-icon-alt, i[data-hook='cmps-review-star-rating'] span.a-icon-alt")
+
+        text = body_el.get_text(" ", strip=True) if body_el else ""
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        rating = _parse_star_value(rate_el.get_text(" ", strip=True)) if rate_el else None
+        _append_review(reviews, seen, text=text, title=title, rating=rating, max_items=limit)
+        if len(reviews) >= limit:
+            break
+
+    if len(reviews) < 8:
+        for sel in [
+            "span[data-hook='review-body'] span",
+            ".review-text-content span",
+            "span.review-text-review span",
+        ]:
+            for node in soup.select(sel):
+                _append_review(reviews, seen, text=node.get_text(" ", strip=True), max_items=limit)
+                if len(reviews) >= limit:
+                    break
+            if len(reviews) >= limit:
+                break
+
+    if len(reviews) < 6:
+        regexes = [
+            r'"reviewText"\s*:\s*"([^"]{20,900})"',
+            r'"reviewBody"\s*:\s*"([^"]{20,900})"',
+        ]
+        for pattern in regexes:
+            for match in re.finditer(pattern, html, re.I):
+                _append_review(reviews, seen, text=match.group(1), max_items=limit)
+                if len(reviews) >= limit:
+                    break
+            if len(reviews) >= limit:
+                break
+
+    avg_rating = None
+    for sel in [
+        "i[data-hook='average-star-rating'] span.a-icon-alt",
+        "span[data-hook='rating-out-of-text']",
+        "span.a-size-base.a-color-base",
+    ]:
+        node = soup.select_one(sel)
+        if not node:
+            continue
+        avg_rating = _parse_star_value(node.get_text(" ", strip=True))
+        if avg_rating is not None:
+            break
+    if avg_rating is None:
+        m = re.search(r'"averageStarRating"\s*:\s*"?([0-5](?:\.\d+)?)"?', html)
+        if m:
+            avg_rating = _parse_star_value(m.group(1))
+
+    total_ratings = None
+    total_reviews = None
+    for sel in [
+        "#acrCustomerReviewText",
+        "span[data-hook='total-review-count']",
+        "#reviewsMedley span[data-hook='total-review-count']",
+    ]:
+        node = soup.select_one(sel)
+        if not node:
+            continue
+        r_count, rv_count = _extract_count_bundle(node.get_text(" ", strip=True))
+        if total_ratings is None and r_count is not None:
+            total_ratings = r_count
+        if total_reviews is None and rv_count is not None:
+            total_reviews = rv_count
+
+    if total_reviews is None:
+        m = re.search(r'"totalReviewCount"\s*:\s*"?(\d[\d,]*)"?', html)
+        if m:
+            total_reviews = _parse_count(m.group(1))
+    if total_ratings is None:
+        m = re.search(r'"totalRatingCount"\s*:\s*"?(\d[\d,]*)"?', html)
+        if m:
+            total_ratings = _parse_count(m.group(1))
+
+    return {
+        "reviews": reviews,
+        "average_rating": avg_rating,
+        "total_ratings": total_ratings,
+        "total_reviews": total_reviews,
+    }
+
+
+def _extract_flipkart_reviews(soup: BeautifulSoup, html: str, limit: int = 80) -> dict:
+    reviews: List[dict] = []
+    seen = set()
+
+    cards = soup.select("div._27M-vq, div.col.EPCmJX, div._1AtVbE, div[class*='review']")
+    for card in cards:
+        body_el = card.select_one("div.ZmyHeo, div.t-ZTKy, div._6K-7Co, p.z9E0IG, div._11pzQk")
+        title_el = card.select_one("p._2-N8zT, p.z9E0IG")
+        rate_el = card.select_one("div.XQDdHH, div._3LWZlK, span._1lRcqv")
+
+        text = body_el.get_text(" ", strip=True) if body_el else ""
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        rating = _parse_star_value(rate_el.get_text(" ", strip=True)) if rate_el else None
+        _append_review(reviews, seen, text=text, title=title, rating=rating, max_items=limit)
+        if len(reviews) >= limit:
+            break
+
+    if len(reviews) < 8:
+        for sel in ["div.ZmyHeo", "div.t-ZTKy", "div._6K-7Co", "p.z9E0IG"]:
+            for node in soup.select(sel):
+                _append_review(reviews, seen, text=node.get_text(" ", strip=True), max_items=limit)
+                if len(reviews) >= limit:
+                    break
+            if len(reviews) >= limit:
+                break
+
+    if len(reviews) < 6:
+        regexes = [
+            r'"reviewText"\s*:\s*"([^"]{20,900})"',
+            r'"comment"\s*:\s*"([^"]{20,900})"',
+        ]
+        for pattern in regexes:
+            for match in re.finditer(pattern, html, re.I):
+                _append_review(reviews, seen, text=match.group(1), max_items=limit)
+                if len(reviews) >= limit:
+                    break
+            if len(reviews) >= limit:
+                break
+
+    avg_rating = None
+    for sel in ["div.XQDdHH", "div._3LWZlK", "span._1lRcqv"]:
+        node = soup.select_one(sel)
+        if not node:
+            continue
+        avg_rating = _parse_star_value(node.get_text(" ", strip=True))
+        if avg_rating is not None:
+            break
+    if avg_rating is None:
+        m = re.search(r'"averageRating"\s*:\s*"?([0-5](?:\.\d+)?)"?', html)
+        if m:
+            avg_rating = _parse_star_value(m.group(1))
+
+    total_ratings = None
+    total_reviews = None
+    for sel in ["span.Wphh3N", "span._2_R_DZ", "div._2_R_DZ"]:
+        node = soup.select_one(sel)
+        if not node:
+            continue
+        r_count, rv_count = _extract_count_bundle(node.get_text(" ", strip=True))
+        if total_ratings is None and r_count is not None:
+            total_ratings = r_count
+        if total_reviews is None and rv_count is not None:
+            total_reviews = rv_count
+
+    if total_reviews is None:
+        m = re.search(r'"reviewCount"\s*:\s*"?(\d[\d,]*)"?', html)
+        if m:
+            total_reviews = _parse_count(m.group(1))
+    if total_ratings is None:
+        m = re.search(r'"ratingCount"\s*:\s*"?(\d[\d,]*)"?', html)
+        if m:
+            total_ratings = _parse_count(m.group(1))
+
+    return {
+        "reviews": reviews,
+        "average_rating": avg_rating,
+        "total_ratings": total_ratings,
+        "total_reviews": total_reviews,
+    }
+
+
+def _sentiment_polarity(tokens: List[str]) -> float:
+    if not tokens:
+        return 0.0
+    pos = sum(1 for t in tokens if t in POSITIVE_WORDS)
+    neg = sum(1 for t in tokens if t in NEGATIVE_WORDS)
+    if pos == 0 and neg == 0:
+        return 0.0
+    return (pos - neg) / max(pos + neg, 1)
+
+
+def _score_review(text: str, rating: Optional[float], dup_count: int) -> Tuple[float, List[str], Dict[str, bool]]:
+    raw = str(text or "").strip()
+    low = raw.lower()
+    tokens = re.findall(r"[a-z']+", low)
+    token_count = len(tokens)
+    reasons: List[str] = []
+    flags = {
+        "duplicate": False,
+        "short": False,
+        "promo": False,
+        "mismatch": False,
+    }
+
+    score = 0.12
+
+    if token_count < 6:
+        score += 0.34
+        reasons.append("Very short review")
+        flags["short"] = True
+    elif token_count < 12:
+        score += 0.18
+        reasons.append("Short generic review")
+        flags["short"] = True
+
+    if dup_count > 1:
+        score += min(0.40, 0.16 + (dup_count - 1) * 0.08)
+        reasons.append("Repeated review text pattern")
+        flags["duplicate"] = True
+
+    promo_hits = sum(1 for p in PROMO_PHRASES if p in low)
+    if promo_hits >= 2:
+        score += 0.16
+        reasons.append("Heavy promotional wording")
+        flags["promo"] = True
+    elif promo_hits == 1 and token_count < 16:
+        score += 0.08
+        reasons.append("Promotional wording")
+        flags["promo"] = True
+
+    exclamation_count = raw.count("!")
+    if exclamation_count >= 3:
+        score += 0.09
+        reasons.append("Excessive punctuation")
+
+    alpha_chars = sum(1 for ch in raw if ch.isalpha())
+    upper_chars = sum(1 for ch in raw if ch.isupper())
+    if alpha_chars >= 10 and (upper_chars / max(alpha_chars, 1)) > 0.35:
+        score += 0.10
+        reasons.append("Unnatural uppercase usage")
+
+    if re.search(r"(.)\1{4,}", low):
+        score += 0.08
+        reasons.append("Repeated character bursts")
+
+    if token_count >= 15:
+        lexical_diversity = len(set(tokens)) / max(token_count, 1)
+        if lexical_diversity < 0.38:
+            score += 0.09
+            reasons.append("Low wording diversity")
+
+    sentiment = _sentiment_polarity(tokens)
+    if rating is not None:
+        if rating >= 4.0 and sentiment < -0.15:
+            score += 0.12
+            reasons.append("Rating and sentiment mismatch")
+            flags["mismatch"] = True
+        elif rating <= 2.0 and sentiment > 0.15:
+            score += 0.12
+            reasons.append("Rating and sentiment mismatch")
+            flags["mismatch"] = True
+
+    score = max(0.0, min(score, 0.98))
+    if not reasons:
+        reasons.append("No strong suspicious patterns")
+    return score, reasons, flags
+
+
+def _analyze_review_authenticity(reviews: List[dict]) -> dict:
+    cleaned = []
+    for item in reviews or []:
+        text = _normalize_review_text(item.get("text"))
+        if not text:
+            continue
+        rating = _parse_star_value(str(item.get("rating"))) if item.get("rating") is not None else None
+        cleaned.append({"text": text, "rating": rating})
+
+    if not cleaned:
+        return {
+            "total_reviews_analyzed": 0,
+            "fake_reviews": 0,
+            "real_reviews": 0,
+            "fake_percentage": 0.0,
+            "real_percentage": 0.0,
+            "confidence": 0.0,
+            "risk_level": "LOW",
+            "summary": "No review text could be extracted from this product page.",
+            "signals": {
+                "duplicate_reviews": 0,
+                "short_reviews": 0,
+                "promo_language_reviews": 0,
+                "rating_mismatch_reviews": 0,
+            },
+            "top_suspicious_reviews": [],
+            "sample_real_reviews": [],
+        }
+
+    key_counter = Counter(_review_key(r["text"]) for r in cleaned)
+    scored = []
+    signal_counts = {
+        "duplicate_reviews": 0,
+        "short_reviews": 0,
+        "promo_language_reviews": 0,
+        "rating_mismatch_reviews": 0,
+    }
+
+    for row in cleaned[:120]:
+        key = _review_key(row["text"])
+        dup_count = key_counter.get(key, 1)
+        score, reasons, flags = _score_review(row["text"], row.get("rating"), dup_count)
+        is_fake = score >= 0.56
+
+        if flags["duplicate"]:
+            signal_counts["duplicate_reviews"] += 1
+        if flags["short"]:
+            signal_counts["short_reviews"] += 1
+        if flags["promo"]:
+            signal_counts["promo_language_reviews"] += 1
+        if flags["mismatch"]:
+            signal_counts["rating_mismatch_reviews"] += 1
+
+        scored.append({
+            "text": row["text"],
+            "rating": row.get("rating"),
+            "fake_score": round(score, 3),
+            "label": "FAKE" if is_fake else "REAL",
+            "reasons": reasons[:3],
+        })
+
+    total = len(scored)
+    fake_reviews = sum(1 for r in scored if r["label"] == "FAKE")
+    real_reviews = max(total - fake_reviews, 0)
+    fake_pct = round((fake_reviews / total) * 100, 1) if total else 0.0
+    real_pct = round(100.0 - fake_pct, 1) if total else 0.0
+
+    risk_level = "LOW"
+    if fake_pct >= 45:
+        risk_level = "HIGH"
+    elif fake_pct >= 25:
+        risk_level = "MEDIUM"
+
+    sample_factor = min(total / 40.0, 1.0)
+    signal_density = min(
+        (
+            signal_counts["duplicate_reviews"] +
+            signal_counts["promo_language_reviews"] +
+            signal_counts["rating_mismatch_reviews"]
+        ) / max(total, 1),
+        1.0,
+    )
+    confidence = 0.45 + (0.35 * sample_factor) + (0.20 * signal_density)
+    if total < 8:
+        confidence -= 0.12
+    confidence = round(max(0.15, min(confidence, 0.98)), 3)
+
+    if risk_level == "HIGH":
+        summary = "High fake-review risk detected. Validate seller, verified badges, and recent critical reviews before purchase."
+    elif risk_level == "MEDIUM":
+        summary = "Moderate fake-review risk detected. Cross-check detailed reviews and reviewer history before final decision."
+    else:
+        summary = "Low fake-review risk detected from sampled reviews."
+
+    suspicious = sorted(scored, key=lambda x: x["fake_score"], reverse=True)[:5]
+    real_examples = sorted(scored, key=lambda x: x["fake_score"])[:3]
+
+    return {
+        "total_reviews_analyzed": total,
+        "fake_reviews": fake_reviews,
+        "real_reviews": real_reviews,
+        "fake_percentage": fake_pct,
+        "real_percentage": real_pct,
+        "confidence": confidence,
+        "risk_level": risk_level,
+        "summary": summary,
+        "signals": signal_counts,
+        "top_suspicious_reviews": suspicious,
+        "sample_real_reviews": real_examples,
+    }
+
+
+def detect_fake_reviews(raw_url: str) -> dict:
+    url = str(raw_url or "").strip()
+    if not url:
+        return {"success": False, "error": "URL is required"}
+
+    print(f"\n{'='*65}")
+    print(f"[REVIEW DETECTION] {url}")
+    print(f"[REVIEW DETECTION] ScraperAPI: {'active' if SCRAPER_API_KEY else 'missing'}")
+
+    host = urlparse(url).netloc.lower().lstrip("www.")
+    is_fk_short = host in {"dl.flipkart.com", "fkrt.cc", "fkrt.it", "fkrt.to"}
+    if (not is_fk_short) and (_is_short(url) or ("amazon.in" not in url and "flipkart.com" not in url)):
+        url = resolve_url(url)
+        print(f"[REVIEW DETECTION] Resolved: {url}")
+
+    url_l = url.lower()
+    if "amazon.in" in url_l or "amazon.com" in url_l:
+        source = "amazon"
+        source_payload = scrape_amazon(url)
+    elif "flipkart.com" in url_l:
+        source = "flipkart"
+        source_payload = scrape_flipkart(url)
+    else:
+        return {
+            "success": False,
+            "error": "Could not identify platform. Please paste a direct Amazon.in or Flipkart.com product URL.",
+        }
+
+    html = _fetch_product_html(url, source)
+    if not html:
+        return {
+            "success": False,
+            "error": "Could not fetch the product page for review extraction. Please try again with a full product URL.",
+        }
+
+    soup = BeautifulSoup(html, "html.parser")
+    review_payload = _extract_amazon_reviews(soup, html, limit=REVIEW_ANALYSIS_CAP) if source == "amazon" else _extract_flipkart_reviews(soup, html, limit=REVIEW_ANALYSIS_CAP)
+    review_payload = _augment_reviews_with_pages(source, url, soup, html, review_payload)
+    review_analysis = _analyze_review_authenticity(review_payload.get("reviews", []))
+
+    if review_analysis["total_reviews_analyzed"] == 0:
+        return {
+            "success": False,
+            "error": "Could not extract enough review text from this product page.",
+        }
+
+    product_name = (
+        (source_payload or {}).get("title")
+        or _name_from_url(url)
+        or "Product"
+    )
+    warning = ""
+    reported = review_payload.get("total_reviews")
+    analyzed = review_analysis.get("total_reviews_analyzed", 0)
+    if isinstance(reported, int) and reported > 0 and analyzed < min(REVIEW_ANALYSIS_CAP, reported):
+        warning = f"Only a subset of total reviews could be analyzed (cap {REVIEW_ANALYSIS_CAP}); treat percentages as directional."
+
+    return {
+        "success": True,
+        "source_platform": source,
+        "source_url": raw_url,
+        "resolved_url": url,
+        "product": {
+            "name": product_name,
+            "current_price": (source_payload or {}).get("price"),
+            "image_url": (source_payload or {}).get("image_url"),
+            "url": (source_payload or {}).get("url") or url,
+        },
+        "reviews_meta": {
+            "average_rating": review_payload.get("average_rating"),
+            "total_ratings": review_payload.get("total_ratings"),
+            "total_reviews": review_payload.get("total_reviews"),
+        },
+        "review_detection": review_analysis,
+        "warning": warning,
+    }
 
 # =============================================================================
 # Main entry point
